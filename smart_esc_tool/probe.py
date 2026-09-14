@@ -1,11 +1,11 @@
 """Bench sequence for an Avian, over either transport.
 
-    python probe.py COM5 selftest     - wire disconnected, checks the adapter
-    python probe.py COM5 listen       - power the ESC while this runs
-    python probe.py COM5 find         - poll 0x40..0x4F for a device
-    python probe.py COM5 link 0x40    - handshake, negotiate 400000, hold it
-    python probe.py COM5 telem 0x40   - poll telemetry and decode it
-    python probe.py COM5 param 0x40   - the undocumented 0x50 reply
+    smart-esc-tool COM5 selftest     - wire disconnected, checks the adapter
+    smart-esc-tool COM5 listen       - power the ESC while this runs
+    smart-esc-tool COM5 find         - poll 0x40..0x4F for a device
+    smart-esc-tool COM5 link 0x40    - handshake, negotiate 400000, hold it
+    smart-esc-tool COM5 telem 0x40   - poll telemetry and decode it
+    smart-esc-tool COM5 param 0x40   - the undocumented 0x50 reply
 
 Add --via inav to go through a flight controller running INAV instead of the
 ESP32 adapter; the port is then the board's, and it needs a port assigned to

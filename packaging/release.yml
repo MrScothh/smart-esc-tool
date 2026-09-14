@@ -36,3 +36,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/smart-esc-tool.exe
+
+# Not at .github/workflows/release.yml yet: the token that created this
+# repository has no `workflow` scope, so GitHub refuses a push that adds one.
+# Move this file into .github/workflows/ to enable Windows .exe releases.
