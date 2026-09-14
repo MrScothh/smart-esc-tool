@@ -1,0 +1,18 @@
+[project]
+name = "smart-esc-tool"
+version = "0.1.0.dev0"
+description = "Read, configure and update Spektrum Smart ESCs over SRXL2, without the vendor dongle"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-3.0-or-later" }
+dependencies = ["pyserial>=3.5"]
+
+[project.scripts]
+smart-esc-tool = "smart_esc_tool.probe:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["smart_esc_tool*"]
