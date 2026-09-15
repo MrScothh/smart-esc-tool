@@ -91,9 +91,13 @@ class Worker(threading.Thread):
         self.out.put(("ports", found))
         best = discover.pick(found)
         if best is None:
+            # Worth saying, because the list above cannot show an absence.
             self.say("No flight controller and no adapter answered", "warn")
         else:
-            self.say("Found %s" % best.label(), "good")
+            # What was found is already named in the list; repeating it here
+            # says the same thing twice and leaves nothing for the line that
+            # is meant to narrate what is happening.
+            self.say("")
         self.out.put(("busy", False))
 
     def do_connect(self, device, kind):
