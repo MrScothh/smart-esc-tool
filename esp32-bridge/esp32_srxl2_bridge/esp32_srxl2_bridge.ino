@@ -96,6 +96,10 @@
  * of 0x2B2B would eventually end the session on its own.
  */
 #define ESCAPE_GUARD_US     1000000
+
+/* Larghezze degli impulsi, in bin da 2 us: copre da 2 a 160 us, oltre nell ultimo. */
+#define HIST_BINS           80
+#define HIST_STEP_US        2
 #define KEEPALIVE_MAX       80
 
 /* SLIP, RFC 1055. Chosen because a resync costs one byte and no state. */
@@ -125,6 +129,18 @@ static uint32_t pipeLastByteUs = 0;     /* for the escape's guard interval */
 static uint8_t  pipePluses = 0;
 static uint32_t mspLastUs = 0;          /* to abandon a request that stopped */
 static uint8_t  recent[3] = {0, 0, 0};  /* rolling window, to spot "$M<" */
+
+/*
+ * A second listener, for the ESC's programming port.
+ *
+ * That port is the separate three pin connector, not the servo lead, and the
+ * ESC transmits on it unprompted about three seconds after power-up: edge
+ * timing put the shortest pulse at 51 us, which is 19200 baud to within the
+ * measurement. Listening needs no box and drives nothing - the pad is only
+ * ever an input here.
+ */
+static bool     watchOn  = false;
+static uint8_t  watchPin = 19;
 
 /*---------------------------------------------------------------------------
  * USB framing
@@ -435,6 +451,120 @@ static void handleCommand(const uint8_t *p, uint16_t len)
         reportEcho = (len >= 2 && p[1]);
         break;
 
+    case 'U': {
+        /*
+         * Attach or detach a receive-only UART on a pin.
+         *
+         * Serial2 is free; Serial1 is the single wire and Serial0 is the USB
+         * link. Only the receive signal is routed, so nothing can be driven
+         * onto a port whose protocol is not yet known - which matters here,
+         * because the far end is an ESC's bootloader.
+         */
+        if (len >= 6) {
+            watchPin = p[1];
+            uint32_t baud = (uint32_t)p[2] | ((uint32_t)p[3] << 8) |
+                            ((uint32_t)p[4] << 16) | ((uint32_t)p[5] << 24);
+            if (watchOn) {
+                Serial2.end();
+                watchOn = false;
+            }
+            if (baud) {
+                pinMode(watchPin, INPUT_PULLUP);
+                Serial2.begin(baud, SERIAL_8N1, watchPin, -1);
+                watchOn = true;
+            }
+            sendFrame('U', micros(), NULL, 0);
+        }
+        break;
+    }
+
+    case 'M': {
+        /*
+         * Listen on a pin without deciding first what is on it.
+         *
+         * The ESC's programming port is a separate three pin connector and
+         * nothing here knows its rate, so attaching a UART would mean guessing
+         * one and reading noise if the guess is wrong. Timing the edges asks a
+         * question that has an answer either way: the shortest pulse on an
+         * asynchronous line is one bit, so the rate falls out of it, and a line
+         * with no edges at all is itself the finding - it means the ESC says
+         * nothing until it is spoken to.
+         *
+         * Nothing is driven. The pin is an input with a pull-up, which is what
+         * an idle receiver looks like.
+         */
+        if (len < 4) {
+            break;
+        }
+        uint8_t  pin    = p[1];
+        uint16_t window = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
+
+        /*
+         * Do not touch a pad that is already being driven.
+         *
+         * Asking for INPUT_PULLUP rebinds the pad and detaches whatever was
+         * driving it, so measuring the pin this adapter is itself driving used
+         * to silence the very signal being measured - which is how the self
+         * check came back empty while working perfectly. The input path stays
+         * connected on an output pad, so reading it needs no change at all.
+         */
+        if (!(pwmActive && pin == WIRE_PIN) && !(watchOn && pin == watchPin)) {
+            pinMode(pin, INPUT_PULLUP);
+        }
+
+        uint32_t start   = micros();
+        uint32_t deadline = start + (uint32_t)window * 1000u;
+        int      level   = digitalRead(pin);
+        int      first   = level;
+        uint32_t lastEdge = start;
+        uint32_t edges = 0, shortest = 0xFFFFFFFFu, longest = 0;
+        uint32_t lowUs = 0;
+        static uint16_t hist[HIST_BINS];
+        memset(hist, 0, sizeof(hist));
+
+        while ((int32_t)(micros() - deadline) < 0) {
+            int now = digitalRead(pin);
+            if (now != level) {
+                uint32_t t = micros();
+                uint32_t width = t - lastEdge;
+                if (edges) {                    /* the first span is truncated */
+                    if (width < shortest) shortest = width;
+                    if (width > longest)  longest  = width;
+                    if (level == 0)       lowUs   += width;
+                    uint32_t bin = width / HIST_STEP_US;
+                    if (bin >= HIST_BINS) bin = HIST_BINS - 1;   /* l ultimo raccoglie il resto */
+                    if (hist[bin] < 0xFFFF) hist[bin]++;
+                }
+                lastEdge = t;
+                level = now;
+                edges++;
+            }
+        }
+
+        uint8_t out[20];
+        out[0] = pin;
+        out[1] = (uint8_t)first;
+        out[2] = (uint8_t)level;
+        memcpy(out + 3,  &edges,    4);
+        memcpy(out + 7,  &shortest, 4);
+        memcpy(out + 11, &longest,  4);
+        memcpy(out + 15, &lowUs,    4);
+        sendFrame('M', start, out, 19);
+
+        /*
+         * And the distribution, because the minimum is a single sample.
+         *
+         * One spike, one missed edge, one interrupt landing in the wrong place
+         * and the shortest pulse is wrong - and the shortest pulse is exactly
+         * what the bit time was being read from. A histogram says the same
+         * thing with every pulse voting: on an asynchronous line the widths
+         * cluster at one, two and three bit times, so the spacing between the
+         * clusters is the bit, and no single sample can move it.
+         */
+        sendFrame('H', start, (const uint8_t *)hist, sizeof(hist));
+        break;
+    }
+
     case 'X':
         /*
          * Drop whatever is in flight and forget the echo we are still owed. The
@@ -670,6 +800,29 @@ void loop()
         if (rxLen) {
             sendFrame('R', rxFirstUs, rx, rxLen);
             rxLen = 0;
+        }
+    }
+
+    /* --- the programming port, when someone is listening -------------- */
+    if (watchOn) {
+        static uint8_t  pw[RX_CHUNK_MAX];
+        static uint16_t pwLen = 0;
+        static uint32_t pwFirstUs = 0, pwLastUs = 0;
+        while (Serial2.available()) {
+            uint32_t now = micros();
+            if (!pwLen) {
+                pwFirstUs = now;
+            }
+            pw[pwLen++] = (uint8_t)Serial2.read();
+            pwLastUs = now;
+            if (pwLen == RX_CHUNK_MAX) {
+                sendFrame('P', pwFirstUs, pw, pwLen);
+                pwLen = 0;
+            }
+        }
+        if (pwLen && (micros() - pwLastUs) > RX_IDLE_FLUSH_US) {
+            sendFrame('P', pwFirstUs, pw, pwLen);
+            pwLen = 0;
         }
     }
 

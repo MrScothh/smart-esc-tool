@@ -52,20 +52,46 @@ The ESC ignores `ParamConfig` (0x50) on that wire, and its configuration is
 exposed as a text page over telemetry instead - which is what this tool drives.
 A bootloader entry on the throttle wire would be a surprise, not an expectation.
 
+## The ESC introduces itself
+
+Listening on the programming port, with nothing attached to it and nothing
+transmitted, settles part of this. About three seconds after power-up the ESC
+sends, unprompted:
+
+    31 34 32 32 39 32 32 31        "14229221"
+
+Eight ASCII digits, once, and then silence. Identical on every power-up -
+six cycles in one session and four in another, byte for byte.
+
+The rate was read from the line rather than guessed. Pulse widths cluster at
+**52, 104 and 156 microseconds** - one, two and three bit times - which puts
+the bit at 52 us and the line at **19200 baud, 8N1**, 2% from the standard
+rate and nowhere near any other. The first attempt took the shortest pulse in
+a window as the bit time and got 51 us from a single sample; the clusters say
+the same thing with every pulse voting, and that is the number to trust.
+
+There is no framing around it: no opening byte, no length, no checksum. The
+port speaks text.
+
+So the earlier conclusion here - that without an SPMXCA200 there is nothing to
+reverse - was wrong, and pleasantly so. **The ESC's half is readable without
+owning anything.** What is still missing is the reply: what the box says back
+to that greeting, and whether the ESC then expects a command, an
+acknowledgement, or a version number.
+
 ## What would actually be needed
 
-The protocol to imitate lives between the box and the ESC, and no artefact
-examined here contains it. The Windows application knows how to talk to the
-*box*; the box knows how to talk to the ESC. Without an SPMXCA200 to watch,
-there is nothing to reverse - and the programming port is already wired to a
-spare pin on the adapter, so the moment one exists, the capture is a short job.
+The other half of the conversation is still only inside the box. The Windows
+application knows how to talk to the *box*; the box knows how to talk to the
+ESC, and only the greeting above has been seen from the outside.
 
 Two routes, in order of cost:
 
 1. **Watch the box.** With an SPMXCA200 and the official application, capture
-   the programming port while a real update runs. The adapter can already sit
-   on that wire. This settles the framing, the block size, the acknowledgements
-   and the recovery behaviour in one session.
+   the programming port while a real update runs. The adapter is already on
+   that wire and already reads it. This settles what answers the greeting, the
+   framing, the block size, the acknowledgements and the recovery behaviour in
+   one session.
 2. **Speak HID to the box.** Extract the report format from the Delphi binary
    and drive the box directly. Useful only if the box is a transparent bridge,
    which is exactly what route 1 would establish.
