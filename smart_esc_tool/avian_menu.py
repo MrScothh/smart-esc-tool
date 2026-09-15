@@ -236,6 +236,22 @@ class AvianMenu(object):
         raise MenuError("no parameter called %r; the screen offers %s"
                         % (name, ", ".join(n for n, _, _ in self.screen.entries())))
 
+    def bump(self, name, forward=True):
+        """Move one parameter one step along its own list of values.
+
+        Stepping rather than jumping to a wanted value is what an interface
+        wants: the option lists differ between models and firmware versions, so
+        the honest thing to show a person is the value the ESC now reports, not
+        the one that was asked for.
+        """
+        self.goto(name)
+        if forward:
+            self.next_value()
+        else:
+            self.previous_value()
+        here = self.screen.selected()
+        return here[1] if here else None
+
     def activate(self, name):
         """Trigger an entry that has no value, such as EXIT W/ SAVE.
 
