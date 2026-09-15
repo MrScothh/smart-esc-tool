@@ -95,3 +95,35 @@ real firmware, with a real ESC answering at the far end.
 Not proven: that a physical board behaves the same. SITL's UART is a socket,
 not an STM32 pad in single-wire half duplex, and USB timing on a real board is
 its own question.
+
+## Trying the INAV path without a flight controller
+
+INAV has no ESP32 port - 254 targets, every one of them STM32 or AT32 - so the
+adapter cannot run the firmware. It can answer as it, which is the half that
+matters for testing a host: send it MSP and it replies as INAV would, and after
+`MSP_SET_PASSTHROUGH` it becomes a transparent pipe to the wire, closing on
+`+++`. The tool then takes the same path it will take with an aircraft, over a
+real USB serial port, with a real ESC answering.
+
+    smart-esc-tool COM5 config --via inav
+
+Nothing has to be set for this. The adapter's own protocol is SLIP framed and
+MSP opens with `$M<`, so the two cannot be confused and neither end needs to
+remember a mode.
+
+Three differences from a board are worth knowing, because each one was a bug
+before it was a note.
+
+**The rate.** A flight controller mirrors the host's line coding onto the port
+it is bridging, so setting the rate sets the ESC's wire. The adapter's USB rate
+*is* the link, and lowering it to 115200 replaces every byte with noise. The
+transport decides which it is talking to from the rate that answered MSP, and
+refuses to touch a rate it does not own.
+
+**The echo.** A single wire returns the host's own bytes. The adapter passes
+them back in passthrough rather than swallowing them, because a host that is
+never shown an echo is not ready for a board that sends one.
+
+**The reset.** Opening a USB serial port asserts DTR and RTS, which restarts
+every ESP32 development board. Nothing answers for a second or two afterwards,
+so a single silent attempt proves nothing.
