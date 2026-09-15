@@ -108,10 +108,25 @@ class AvianMenu(object):
                 self._last_change = time.monotonic()
 
     # ------------------------------------------------------------- primitives
-    def connect(self, timeout=12.0):
-        end = time.monotonic() + timeout
+    def connect(self, timeout=45.0):
+        """Wait for an ESC to answer, saying so while it waits.
+
+        The window is generous because the thing it is waiting for is usually a
+        person reaching for a switch: an Avian announces itself for a few
+        seconds after power-up and then goes quiet, so the useful behaviour is
+        to still be listening whenever that happens rather than to give up on a
+        schedule of our own.
+        """
+        start = time.monotonic()
+        end = start + timeout
+        said = 0.0
         while self.device is None and time.monotonic() < end:
             self._pump(0.25)
+            waited = time.monotonic() - start
+            if waited - said >= 5.0:
+                said = waited
+                self.log("waiting for the ESC, %.0f s of %.0f"
+                         % (waited, timeout))
         if self.device is None:
             raise MenuError("no ESC answered on 0x%02X..0x%02X after %.0f s: "
                             "check that it has power and that the signal wire "

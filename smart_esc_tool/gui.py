@@ -111,7 +111,7 @@ class Worker(threading.Thread):
         self.menu = AvianMenu(self.br, log=lambda m: self.say(m))
         self.say("Waiting for the ESC. Switch it on now if it is not already",
                  "warn")
-        self.menu.connect(timeout=25.0)
+        self.menu.connect()
         self.out.put(("linked", self.menu.device))
         self.say("ESC 0x%02X answered" % self.menu.device, "good")
         self.do_open()

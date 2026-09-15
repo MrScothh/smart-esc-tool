@@ -15,6 +15,20 @@
  * the same pad, so it reproduces the flight controller's arrangement rather than
  * approximating it: the same single wire, driven the same way.
  *
+ * It also answers as a flight controller. A PC configuring an ESC in an
+ * aircraft reaches the wire through INAV's serial passthrough, not through an
+ * adapter, and that path - MSP, the passthrough handshake, a port that stops
+ * answering anything else until it sees +++ - is where a tool breaks. INAV has
+ * no ESP32 port and never will (254 targets, all STM32 or AT32), so the next
+ * best thing is to speak the flight controller's half of the conversation:
+ * send this sketch MSP and it replies as INAV would, and after
+ * MSP_SET_PASSTHROUGH it becomes a transparent pipe to the wire. The host side
+ * being exercised is then the real one, over a real USB serial port.
+ *
+ * Which protocol is in use is decided by what arrives rather than by a mode
+ * command: the adapter's ownframing is SLIP and MSP begins "$M<", so the two
+ * cannot be confused, and neither end has to remember a setting.
+ *
  * Everything above the wire stays on the PC. This sketch only:
  *   - owns the pad and the baud rate, including switching it once the transmit
  *     buffer has actually drained, which is the thing the oracle harness proved
@@ -58,6 +72,30 @@
 #define RX_CHUNK_MAX        192     /* bytes per report; an SRXL2 frame is <= 80 */
 #define RX_IDLE_FLUSH_US    200     /* report a partial chunk after this much silence */
 #define CMD_MAX             256
+
+/* The three things this port can be doing. */
+#define HOST_SLIP           0       /* the adapter's own protocol */
+#define HOST_MSP            1       /* answering as a flight controller */
+#define HOST_PIPE           2       /* raw bytes, both ways, until +++ */
+
+#define MSP_MAX             128
+#define MSP_STALE_US        250000      /* a half finished request is abandoned */
+#define MSP_FC_VARIANT      2
+#define MSP_FC_VERSION      3
+#define MSP_API_VERSION     1
+#define MSP_BOARD_INFO      4
+#define MSP_SET_PASSTHROUGH 245
+#define PASSTHROUGH_BY_FUNCTION 0xFE
+
+/*
+ * The escape, and why it needs the silence in front of it.
+ *
+ * Three plus signs are five bytes of ordinary SRXL2 away from happening by
+ * accident, so INAV asks for a guard interval first and this does the same: a
+ * second with nothing on the port, then +++. Without the guard a channel value
+ * of 0x2B2B would eventually end the session on its own.
+ */
+#define ESCAPE_GUARD_US     1000000
 #define KEEPALIVE_MAX       80
 
 /* SLIP, RFC 1055. Chosen because a resync costs one byte and no state. */
@@ -78,6 +116,15 @@ static uint32_t keepaliveLast   = 0;
 static uint8_t  cmd[CMD_MAX];
 static uint16_t cmdLen  = 0;
 static bool     cmdEsc  = false;
+
+static uint8_t  hostMode = HOST_SLIP;
+static uint8_t  msp[MSP_MAX];
+static uint16_t mspLen  = 0;            /* bytes of the request collected */
+static uint16_t mspWant = 0;            /* how many the header says there are */
+static uint32_t pipeLastByteUs = 0;     /* for the escape's guard interval */
+static uint8_t  pipePluses = 0;
+static uint32_t mspLastUs = 0;          /* to abandon a request that stopped */
+static uint8_t  recent[3] = {0, 0, 0};  /* rolling window, to spot "$M<" */
 
 /*---------------------------------------------------------------------------
  * USB framing
@@ -231,7 +278,20 @@ static void wireWrite(const uint8_t *data, size_t len)
     if (pwmActive) {
         return;
     }
-    echoPending += len;
+
+    /*
+     * In passthrough the echo is left alone, on purpose.
+     *
+     * A flight controller's single wire returns the host's own bytes and the
+     * host is expected to account for them; swallowing them here would make
+     * this adapter easier to talk to than the thing it is imitating, and the
+     * host code that will meet a real board would go untested. In the
+     * adapter's own protocol the echo is still held back, because there the
+     * host asked for frames, not for a wire.
+     */
+    if (hostMode != HOST_PIPE) {
+        echoPending += len;
+    }
 
     /*
      * Take the wire, send, wait for the last bit to actually leave, release it.
@@ -250,6 +310,82 @@ static void wireWrite(const uint8_t *data, size_t len)
 }
 
 /*---------------------------------------------------------------------------
+ * Answering as a flight controller
+ *-------------------------------------------------------------------------*/
+
+static void mspReply(uint8_t cmd, const uint8_t *payload, uint8_t len)
+{
+    uint8_t head[5] = { '$', 'M', '>', len, cmd };
+    uint8_t crc = len ^ cmd;
+    for (uint8_t i = 0; i < len; i++) {
+        crc ^= payload[i];
+    }
+    Serial.write(head, 5);
+    if (len) {
+        Serial.write(payload, len);
+    }
+    Serial.write(&crc, 1);
+    Serial.flush();
+}
+
+/*
+ * Only the questions a configuration tool actually asks.
+ *
+ * Identifying as INAV is not a pretence about being a flight controller: it is
+ * the answer that makes a host take the path it would take with one, which is
+ * the path being tested. Anything not answered here is simply ignored, the way
+ * a board ignores a command it was built without.
+ */
+static void handleMsp(uint8_t cmd, const uint8_t *payload, uint8_t len)
+{
+    switch (cmd) {
+    case MSP_API_VERSION: {
+        const uint8_t v[3] = { 0, 2, 5 };
+        mspReply(cmd, v, sizeof(v));
+        break;
+    }
+    case MSP_FC_VARIANT:
+        mspReply(cmd, (const uint8_t *)"INAV", 4);
+        break;
+    case MSP_FC_VERSION: {
+        const uint8_t v[3] = { 9, 1, 0 };
+        mspReply(cmd, v, sizeof(v));
+        break;
+    }
+    case MSP_BOARD_INFO: {
+        uint8_t info[9] = { 'E', 'S', 'P', '2', 0, 0, 0, 0, 0 };
+        mspReply(cmd, info, sizeof(info));
+        break;
+    }
+    case MSP_SET_PASSTHROUGH: {
+        /*
+         * A real board answers 0 here when nothing has opened the port for that
+         * function, which is worth reproducing: a tool that only ever sees 1 is
+         * never tested against the refusal. Here the wire is always open, so
+         * the only refusal is for a mode this adapter does not implement.
+         */
+        uint8_t ok = 0;
+        if (len >= 1 && payload[0] == PASSTHROUGH_BY_FUNCTION) {
+            ok = 1;
+        }
+        mspReply(cmd, &ok, 1);
+        if (ok) {
+            hostMode = HOST_PIPE;
+            pipeLastByteUs = micros();
+            pipePluses = 0;
+            echoPending = 0;
+            while (Serial1.available()) {
+                Serial1.read();
+            }
+        }
+        break;
+    }
+    default:
+        break;                              /* a board ignores what it lacks */
+    }
+}
+
+/*---------------------------------------------------------------------------
  * Host commands
  *-------------------------------------------------------------------------*/
 
@@ -261,7 +397,7 @@ static void handleCommand(const uint8_t *p, uint16_t len)
 
     switch (p[0]) {
     case '?':
-        sendText('I', "srxl2-bridge 1");
+        sendText('I', "srxl2-bridge 2");
         break;
 
     case 'B':
@@ -326,14 +462,132 @@ void setup()
 {
     Serial.begin(USB_BAUD);
     wireBegin(WIRE_BAUD_DEFAULT);
-    sendText('I', "srxl2-bridge ready");
+    sendText('I', "srxl2-bridge 2 ready");
 }
 
 void loop()
 {
     /* --- USB in ------------------------------------------------------- */
-    while (Serial.available()) {
+    if (hostMode == HOST_PIPE) {
+        /*
+         * Raw both ways. Bytes are gathered and handed to the wire in one call
+         * rather than one at a time, because a single wire is taken and
+         * released around each transmission and doing that per byte would put a
+         * turnaround in the middle of every frame.
+         */
+        static uint8_t out[CMD_MAX];
+        uint16_t n = 0;
+        while (Serial.available() && n < CMD_MAX) {
+            uint8_t b = Serial.read();
+            uint32_t now = micros();
+
+            if (b == '+' && (pipePluses || (now - pipeLastByteUs) > ESCAPE_GUARD_US)) {
+                pipePluses++;
+                pipeLastByteUs = now;
+                if (pipePluses >= 3) {
+                    hostMode = HOST_SLIP;
+                    cmdLen = 0;
+                    cmdEsc = false;
+                    pipePluses = 0;
+                    sendText('I', "passthrough closed");
+                    return;
+                }
+                continue;               /* held back: it may be the escape */
+            }
+            if (pipePluses) {
+                /* not the escape after all - put the plus signs back */
+                for (uint8_t i = 0; i < pipePluses && n < CMD_MAX; i++) {
+                    out[n++] = '+';
+                }
+                pipePluses = 0;
+            }
+            pipeLastByteUs = now;
+            out[n++] = b;
+        }
+        if (n) {
+            wireWrite(out, n);
+        }
+    } else while (Serial.available()) {
         uint8_t b = Serial.read();
+
+        recent[0] = recent[1];
+        recent[1] = recent[2];
+        recent[2] = b;
+        bool mspStart = (recent[0] == '$' && recent[1] == 'M' && recent[2] == '<');
+
+        if (mspStart) {
+            /*
+             * Start of an MSP request, wherever it falls.
+             *
+             * Looking only at the first byte of a command was not enough. A
+             * host that has not yet found this adapter's USB rate talks at the
+             * wrong one first, and what lands is noise; noise with no SLIP
+             * frame terminator in it leaves the command buffer part filled,
+             * and from then on nothing is ever "the first byte" again. The
+             * three character opening is unambiguous - the adapter's own
+             * commands are single letters - so it is recognised as a sequence
+             * and whatever partial command preceded it is dropped.
+             */
+            cmdLen = 0;
+            cmdEsc = false;
+            hostMode = HOST_MSP;
+            mspLen = 3;
+            mspWant = 0;
+            mspLastUs = micros();
+            msp[0] = '$'; msp[1] = 'M'; msp[2] = '<';
+            continue;
+        }
+
+        if (hostMode == HOST_MSP) {
+            /*
+             * Continuing a request whose opening was recognised above.
+             */
+            /*
+             * Nothing here may be able to wedge.
+             *
+             * The host may well be talking at the wrong rate - it does not know
+             * this adapter's USB speed until something answers - and what
+             * arrives is then noise. Noise contains dollar signs, and a noisy
+             * length byte can ask for more bytes than will ever come. A parser
+             * that simply waits for them swallows every later request, and the
+             * port looks dead when it is merely stuck. So: an oversized length
+             * is rejected outright, and a request that stops mid-way is
+             * abandoned after a quarter of a second.
+             */
+            uint32_t now = micros();
+            if (mspLen && (now - mspLastUs) > MSP_STALE_US) {
+                mspLen = 0;
+                mspWant = 0;
+            }
+            mspLastUs = now;
+            hostMode = HOST_MSP;
+
+            if (mspLen >= MSP_MAX) {
+                mspLen = 0;
+                mspWant = 0;
+                hostMode = HOST_SLIP;
+                continue;
+            }
+            msp[mspLen++] = b;
+
+            if (mspLen == 4) {
+                if (msp[3] > MSP_MAX - 6) {     /* cannot be a real request */
+                    mspLen = 0;
+                    mspWant = 0;
+                    hostMode = HOST_SLIP;
+                } else {
+                    mspWant = 6 + msp[3];       /* header, payload, crc */
+                }
+            } else if (mspWant && mspLen >= mspWant) {
+                handleMsp(msp[4], msp + 5, msp[3]);
+                mspLen = 0;
+                mspWant = 0;
+                if (hostMode == HOST_MSP) {
+                    hostMode = HOST_SLIP;   /* back to neutral between requests */
+                }
+            }
+            continue;
+        }
 
         if (b == SLIP_END) {
             if (cmdLen) {
@@ -385,6 +639,11 @@ void loop()
                     echoLen = 0;
                 }
             }
+            continue;
+        }
+
+        if (hostMode == HOST_PIPE) {
+            Serial.write(b);            /* no framing: the host wants the wire */
             continue;
         }
 

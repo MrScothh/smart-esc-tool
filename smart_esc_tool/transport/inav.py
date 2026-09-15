@@ -118,14 +118,37 @@ class InavPassthrough:
             self.echoes = False
         else:
             self.ser = serial.Serial(port, msp_baud, timeout=timeout)
-            self.echoes = True
+            # Counting the echo was a byte-for-byte accounting of our own
+            # transmission coming back off the single wire, and it only has to
+            # slip once - a dropped byte, a reply that lands mid-count - for it
+            # to start eating real frames instead. Nothing above needs it: the
+            # frame splitter resyncs on the magic byte, and the menu ignores
+            # handshakes that are not from an ESC and control data entirely.
+            # So the echo is simply passed up, the way the wire delivers it.
+            self.echoes = False
         self._t0 = time.monotonic()
         self._echo_pending = 0
         self._report_echo = False
+        #: Whether setting the rate on this link sets it on the ESC's wire.
+        #: A flight controller mirrors the host's line coding onto the port it
+        #: is bridging, so it does. The ESP32 adapter does not: its USB rate is
+        #: how the host reaches it at all, and the wire rate is its own.
+        #: Deciding this wrongly is silent and total - the rate change lands on
+        #: the wrong link and every byte after it is noise.
+        self.mirrors_baud = True
         self._open_passthrough(wire_baud)
 
     # --- setup -----------------------------------------------------------
-    def _open_passthrough(self, wire_baud):
+    #: Rates to try when talking MSP over a real serial port. A flight
+    #: controller answers at the first; the ESP32 adapter, which can also answer
+    #: as one, runs its USB side fast because it normally carries wire data
+    #: wrapped in framing and timestamps. Trying rather than assuming costs one
+    #: second in the worst case and removes a setting nobody should have to know.
+    MSP_RATES = (115200, 921600)
+
+    def _ask_passthrough(self):
+        """Request passthrough once. True if a port was opened, False if refused,
+        None if nothing answered at this rate."""
         self.ser.reset_input_buffer()
         self.ser.write(_msp_request(MSP_SET_PASSTHROUGH,
                                     bytes([PASSTHROUGH_SERIAL_FUNCTION_ID,
@@ -139,17 +162,44 @@ class InavPassthrough:
             buf += self.ser.read(64)
             i = buf.find(b"$M>")
             if i >= 0 and len(buf) >= i + 6:
-                if buf[i + 3] == 1 and buf[i + 5] == 0:
-                    raise RuntimeError(
-                        "the board has no port assigned to Spektrum Smart ESC - "
-                        "assign one in the Ports tab and reboot")
-                break
-        else:
-            raise RuntimeError("no reply to MSP_SET_PASSTHROUGH; is this an INAV port?")
+                return buf[i + 5] != 0
+        return None
 
-        # From here the port is a raw pipe. Setting the rate here sets it on the
-        # ESC's wire, because the flight controller mirrors the host line coding.
-        self.set_baud(wire_baud)
+    def _open_passthrough(self, wire_baud):
+        answer = self._ask_passthrough()
+        if answer is None and not isinstance(self.ser, _Tcp):
+            # Opening a USB serial port asserts DTR and RTS, and on a board
+            # wired for auto-reset - every ESP32 development board, and some
+            # flight controllers - that restarts it. Nothing answers for a
+            # second or two afterwards, so a single silent attempt means very
+            # little. Wait out a reset, then try every rate again.
+            time.sleep(1.6)
+            for _ in range(2):
+                for rate in self.MSP_RATES:
+                    if self.ser.baudrate != rate:
+                        self.ser.baudrate = rate
+                        time.sleep(0.15)
+                    self.ser.reset_input_buffer()
+                    answer = self._ask_passthrough()
+                    if answer is not None:
+                        break
+                if answer is not None:
+                    break
+
+        if answer is None:
+            raise RuntimeError("no reply to MSP_SET_PASSTHROUGH; is this an INAV port?")
+        if answer is False:
+            raise RuntimeError(
+                "the board has no open port for Spektrum Smart ESC - assign one "
+                "in the Ports tab, set the motor protocol to SRXL2, and reboot")
+
+        # A link that answered above 115200 is not a flight controller's MSP
+        # port; it is the adapter, whose USB rate is the link itself. Anything
+        # that later asks for a wire rate must not be allowed to change it.
+        if isinstance(self.ser, _Tcp) or self.ser.baudrate > 115200:
+            self.mirrors_baud = False
+        else:
+            self.set_baud(wire_baud)
         self.ser.reset_input_buffer()
 
     # --- the same surface as bridge.Bridge -------------------------------
@@ -157,6 +207,8 @@ class InavPassthrough:
         return int((time.monotonic() - self._t0) * 1e6)
 
     def set_baud(self, baud):
+        if not self.mirrors_baud:
+            return                  # the far end owns the wire's rate
         self.ser.baudrate = baud
         time.sleep(0.05)            # the mirror is rate-limited to 15 ms
 

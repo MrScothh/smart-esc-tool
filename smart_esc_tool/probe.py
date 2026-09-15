@@ -202,6 +202,7 @@ def config(br, dev=None, assignments=(), finish=None):
     br.report_echo(False)
 
     menu = AvianMenu(br, dev, log=lambda m: print("    %s" % m))
+    menu.connect()
     menu.enter()
     print("    %s" % (menu.screen.title() or "menu"))
     for name, value, selected in menu.settings():
@@ -245,6 +246,7 @@ def walk(br, dev=None):
     br.report_echo(False)
 
     menu = AvianMenu(br, dev, log=lambda m: print("    %s" % m))
+    menu.connect()
     menu.enter()
     found = menu.walk()
     print("    %d entries:" % len(found))
