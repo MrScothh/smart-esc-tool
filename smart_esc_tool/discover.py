@@ -19,6 +19,7 @@ the better part of a second, and a person with a flight controller, an adapter
 and a Bluetooth port should not wait for all three in turn.
 """
 
+import socket
 import threading
 import time
 
@@ -38,6 +39,11 @@ LIKELY_BRIDGE = {(0x10C4, 0xEA60),  # CP210x
                  (0x1A86, 0x55D4),
                  (0x303A, 0x1001)}  # ESP32-S3 native USB
 
+#: INAV's SITL puts its first UART on this port, and MSP with it. A flight
+#: controller that is a process on this machine answers the same questions as
+#: one on a board, which is the whole point of looking here.
+SITL_PORTS = (5760, 5761, 5762)
+
 
 class Found(object):
     """One port and what answered on it."""
@@ -53,6 +59,8 @@ class Found(object):
         return self.kind in ("inav", "esp32")
 
     def label(self):
+        if self.kind == "inav" and ":" in self.device:
+            return "%s  -  %s" % (self.device, self.detail)
         if self.kind == "esp32":
             return "%s  -  SRXL2 adapter" % self.device
         if self.kind in ("inav", "betaflight"):
@@ -109,6 +117,44 @@ def _probe_flight_controller(device):
         return None
 
 
+def _probe_sitl(port, host="127.0.0.1"):
+    try:
+        sock = socket.create_connection((host, port), timeout=0.4)
+    except OSError:
+        return None
+    try:
+        sock.settimeout(0.8)
+        sock.sendall(_msp_frame(MSP_FC_VARIANT))
+        deadline = time.monotonic() + 1.0
+        buf = bytearray()
+        while time.monotonic() < deadline:
+            try:
+                chunk = sock.recv(256)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            buf += chunk
+            i = buf.find(b"$M>")
+            if i >= 0 and len(buf) >= i + 5:
+                length = buf[i + 3]
+                if len(buf) >= i + 5 + length:
+                    name = bytes(buf[i + 5:i + 5 + length]).decode(
+                        "ascii", "replace").strip()
+                    if not name:
+                        return None
+                    return Found("%s:%d" % (host, port), "inav",
+                                 "%s in SITL" % name)
+    except OSError:
+        return None
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+    return None
+
+
 def _probe_adapter(device):
     try:
         from .transport.esp32 import Esp32Bridge
@@ -159,7 +205,15 @@ def scan(timeout=6.0):
     """
     ports = list(list_ports.comports())
     results = {}
+    extra = []
     threads = []
+
+    def look_for_sitl():
+        for port in SITL_PORTS:
+            found = _probe_sitl(port)
+            if found is not None:
+                extra.append(found)
+                return
 
     def work(p):
         ids = (p.vid, p.pid)
@@ -172,11 +226,15 @@ def scan(timeout=6.0):
         t.daemon = True
         t.start()
         threads.append(t)
+    t = threading.Thread(target=look_for_sitl)
+    t.daemon = True
+    t.start()
+    threads.append(t)
     end = time.monotonic() + timeout
     for t in threads:
         t.join(max(0.1, end - time.monotonic()))
 
-    out = []
+    out = list(extra)
     for p in ports:
         out.append(results.get(p.device)
                    or Found(p.device, None, "", p.description or ""))

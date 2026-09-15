@@ -23,17 +23,76 @@ half duplex does not mute the receiver while transmitting, so everything sent
 comes back. That is handled here the same way the ESP32 handles it, by counting.
 """
 
+import socket
 import time
 
 import serial
 
 from . import Event
 
+
+class _Tcp(object):
+    """A TCP socket wearing the few methods this module uses on a serial port.
+
+    INAV's SITL exposes each of its UARTs as a TCP socket rather than a COM
+    port, so the flight controller can be a process on this machine. Everything
+    above the transport is then exercised for real - MSP, the passthrough
+    handshake, the framing - against the same firmware that runs on a board.
+    """
+
+    def __init__(self, host, port, timeout=0.02):
+        self.sock = socket.create_connection((host, int(port)), timeout=3.0)
+        self.sock.settimeout(timeout)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.baudrate = 0            # a socket has no line rate to set
+
+    def read(self, size=1):
+        try:
+            return self.sock.recv(size)
+        except socket.timeout:
+            return b""
+        except OSError:
+            return b""
+
+    def write(self, data):
+        self.sock.sendall(bytes(data))
+        return len(data)
+
+    def flush(self):
+        pass
+
+    def reset_input_buffer(self):
+        self.sock.setblocking(False)
+        try:
+            while self.sock.recv(65536):
+                pass
+        except Exception:
+            pass
+        finally:
+            self.sock.settimeout(0.02)
+
+    def close(self):
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
 MSP_SET_PASSTHROUGH = 245
 PASSTHROUGH_SERIAL_FUNCTION_ID = 0xFE
 
 #: Serial function id for FUNCTION_ESC_SRXL2, i.e. the bit index in io/serial.h.
 FUNCTION_ESC_SRXL2_ID = 29
+
+
+def _split_host_port(port):
+    """("127.0.0.1", 5760) for a SITL address, None for a COM port."""
+    text = str(port)
+    if text.count(":") != 1:
+        return None
+    host, _, tail = text.partition(":")
+    if not tail.isdigit() or not host:
+        return None
+    return host, int(tail)
 
 
 def _msp_request(cmd, payload=b""):
@@ -50,7 +109,16 @@ class InavPassthrough:
     not good enough to measure a turnaround - that is what the ESP32 is for."""
 
     def __init__(self, port, msp_baud=115200, wire_baud=115200, timeout=0.02):
-        self.ser = serial.Serial(port, msp_baud, timeout=timeout)
+        host_port = _split_host_port(port)
+        if host_port:
+            self.ser = _Tcp(host_port[0], host_port[1], timeout)
+            # A socket carries no echo: the single wire that returns our own
+            # bytes is on the far side of whatever bridges the UART, and that
+            # bridge is what decides. Counting echo here would eat real replies.
+            self.echoes = False
+        else:
+            self.ser = serial.Serial(port, msp_baud, timeout=timeout)
+            self.echoes = True
         self._t0 = time.monotonic()
         self._echo_pending = 0
         self._report_echo = False
@@ -93,7 +161,8 @@ class InavPassthrough:
         time.sleep(0.05)            # the mirror is rate-limited to 15 ms
 
     def write(self, data):
-        self._echo_pending += len(data)
+        if self.echoes:
+            self._echo_pending += len(data)
         self.ser.write(bytes(data))
         self.ser.flush()
 

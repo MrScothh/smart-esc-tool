@@ -51,3 +51,47 @@ forgets it, which is indistinguishable from it having ignored the change.
 
 Pillow is needed for the first line only; the application itself uses the
 written icon and never imports an imaging library.
+
+## Trying it without an aircraft
+
+INAV's SITL runs the same firmware as a board and exposes each of its UARTs as
+a TCP socket, so the whole path can be exercised with nothing on the bench but
+the ESC:
+
+    tool -> TCP 5760, SITL's MSP
+         -> passthrough
+         -> SITL's UART2, exposed as TCP 5761
+         -> a relay
+         -> the SRXL2 adapter
+         -> the wire
+         -> the ESC
+
+The tool finds SITL by itself and prefers it, because a flight controller is a
+better answer than an adapter when both are present.
+
+Two settings are needed in SITL's CLI, and the second is easy to miss:
+
+    serial 1 536870912 115200 115200 0 115200
+    set motor_pwm_protocol = SRXL2
+    save
+
+Assigning the function is not enough. `MSP_SET_PASSTHROUGH` looks for the port
+by function and then for a port *usage* - a port that is actually open - and
+nothing opens it until the motor protocol makes the SRXL2 output run. Without
+the second line the passthrough is refused with a plain zero and no
+explanation.
+
+One behaviour worth knowing: `serialPassthrough()` blocks in a loop and the
+scheduler stops with it, so a flight controller in passthrough answers nothing
+else until the session ends with `+++`. A tool that opens passthrough and then
+walks away leaves the board deaf until it is restarted.
+
+### What this proves, and what it does not
+
+Proven: the MSP handshake, choosing the port by function id, the passthrough
+relaying bytes in both directions, and this tool's INAV transport - against the
+real firmware, with a real ESC answering at the far end.
+
+Not proven: that a physical board behaves the same. SITL's UART is a socket,
+not an STM32 pad in single-wire half duplex, and USB timing on a real board is
+its own question.
