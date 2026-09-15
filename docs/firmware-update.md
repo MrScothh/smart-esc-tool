@@ -79,6 +79,43 @@ owning anything.** What is still missing is the reply: what the box says back
 to that greeting, and whether the ESC then expects a command, an
 acknowledgement, or a version number.
 
+## 19200 is not an accident
+
+HobbyWing document the rate themselves, for the same connector, in the Platinum
+V3 manual:
+
+> The PLATINUM V3 series of ESC has independent port for connecting the LCD
+> program box and output the running status data of the ESC via the SCI (Serial
+> Communication interface). Here, we open this functionality to the public so
+> users can redevelop this ESC... When motor rotates, the parameter setting port
+> works as single-way mode SCI and the baud rate is 19200bps. The port outputs
+> 1 data package (frame) every 20 milliseconds.
+
+So the port has two jobs on one wire. Stopped, it looks for a program box.
+Running, it streams telemetry - and that half is documented down to the frame:
+"Each data package (/frame) is started with the code **0x9B**", then a package
+number, then the throttle the receiver asked for, and so on. Reading it needs
+no permission and no box; HobbyWing say outright that they opened it.
+
+The same 19200 8N1 turns up across the family - the Turnigy and HobbyKing
+program cards for the 80 A and 120 A Turbo ESCs use it too. It is a house
+convention for this connector rather than a chip's bootloader rate, which is
+worth knowing because it means the framing is theirs to choose and not
+something a datasheet will explain.
+
+## The shape of the conversation is already known
+
+`jsanpe/hobbysurpassemu` emulates a programming card for Surpass ESCs. Different
+family, different numbers - 820 bps, `0x1B 0xFF` from the ESC answered by
+`0x1C 0xFF` from the card - but the same shape as what was captured here: **the
+ESC speaks first**, announcing itself to find out whether a card is listening,
+and waits. After the card answers, parameters are read and written one byte at
+a time.
+
+That is almost certainly what `"14229221"` is: this ESC asking whether a program
+box is there. Which makes the missing piece small and specific - not a protocol,
+a reply.
+
 ## What would actually be needed
 
 The other half of the conversation is still only inside the box. The Windows
