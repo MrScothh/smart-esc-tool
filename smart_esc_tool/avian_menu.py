@@ -73,6 +73,12 @@ class AvianMenu(object):
                 return
             if now >= nxt:
                 nxt = now + 0.02
+                # Telemetria a ogni frame: qui serve la pagina di testo il piu'
+                # in fretta possibile, ed e' l'unica cosa che l'ESC risponde. Il
+                # prezzo e' che a 50 Hz di richieste l'ESC tiene il collegamento
+                # ma smette di ubbidire al gas - va bene per un menu, dove il
+                # motore deve stare fermo, e non va bene in volo. Il driver di
+                # INAV infatti non scende mai sotto un frame su due.
                 self.br.write(srxl2.control_data(self._channels,
                                                  reply_id=self.device or 0))
             if self.device is None and now >= nxt_hs:

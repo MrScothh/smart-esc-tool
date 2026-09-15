@@ -1,3 +1,3 @@
 """An open tool for Spektrum Smart ESCs, over SRXL2."""
 
-__version__ = "0.1.0.dev0"
+__version__ = "1.0.0"

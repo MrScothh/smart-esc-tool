@@ -41,6 +41,19 @@ separate entries for leaving with and without writing. An afternoon was lost to
 this before it was understood - the ESC accepts a change, confirms it, and then
 forgets it, which is indistinguishable from it having ignored the change.
 
+## The motor will not run while this is connected
+
+The tool asks the ESC for telemetry on every frame, because the text page is the
+only thing it has to read and it wants it as fast as the wire allows. An Avian
+answers that rate perfectly well and quietly stops obeying the throttle: it
+reports 0.0 % from every position, and goes back to normal the moment something
+asks less often - no power cycle needed.
+
+So a motor that does nothing while a settings session is open is the expected
+behaviour, not a fault, and not a reason to go looking for one. It is also the
+safer arrangement for a bench where someone has left a battery connected. Close
+the session, and the ESC takes throttle again.
+
 ## Building it
 
     python packaging/make_icon.py
