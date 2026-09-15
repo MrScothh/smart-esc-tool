@@ -19,24 +19,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install pyserial pyinstaller
+      # The interface is PySide6 and qfluentwidgets: an executable built without
+      # them starts and then fails on the first window.
+      - run: pip install pyserial pyinstaller PySide6 "PySide6-Fluent-Widgets[full]"
 
+      # packaging/build.py rather than a bare pyinstaller call: it carries the
+      # icon, the manifest and the exclusion list that keeps the download at
+      # 51 MB instead of 336, and it is the same script used on a desk.
       - name: Build
-        run: >
-          pyinstaller --onefile --name smart-esc-tool
-          --paths . smart_esc_tool/__main__.py
+        run: python packaging/build.py
 
       - uses: actions/upload-artifact@v4
         with:
           name: smart-esc-tool-windows
-          path: dist/smart-esc-tool.exe
+          path: dist/SmartEscTool.exe
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/smart-esc-tool.exe
-
-# Not at .github/workflows/release.yml yet: the token that created this
-# repository has no `workflow` scope, so GitHub refuses a push that adds one.
-# Move this file into .github/workflows/ to enable Windows .exe releases.
+          files: dist/SmartEscTool.exe
