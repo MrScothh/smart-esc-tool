@@ -77,6 +77,28 @@ def round_rect(canvas, x0, y0, x1, y1, r, **kw):
     return canvas.create_polygon(pts, smooth=True, splinesteps=24, **kw)
 
 
+def fit_text(text, font, width):
+    """Shorten text until it fits, with an ellipsis. Never loops forever.
+
+    The first version of this shrank the string while it was too wide, which is
+    fine until the available width is negative - which it is for one frame,
+    before a freshly packed widget has been given its size. Then the condition
+    can never be satisfied, and because the last character is an ellipsis the
+    string stops getting shorter: the interface thread spins and the window
+    stops responding. Both guards below exist for that.
+    """
+    if not text:
+        return text
+    if width <= 0:
+        return text
+    if font.measure(text) <= width:
+        return text
+    cut = text
+    while len(cut) > 1 and font.measure(cut + "…") > width:
+        cut = cut[:-1]
+    return cut + "…"
+
+
 def mix(a, b, t):
     """Blend two #rrggbb colours."""
     pa = tuple(int(a[i:i + 2], 16) for i in (1, 3, 5))
@@ -188,12 +210,17 @@ class ParamRow(tk.Canvas):
     def _zones(self):
         """Right to left: step up, the value, step down.
 
+        A widget that has just been packed reports a width of one pixel until
+        Tk has laid it out, and every position here would come out negative.
+
         The value needs real room - "Fixed-wing" and "Auto Calc" are as much a
         value as "7" - and a field too narrow for them is worse than useless,
         because the text is clipped exactly where the difference between two
         options usually lives.
         """
-        w = self.winfo_width() or 600
+        w = self.winfo_width()
+        if w < 320:
+            w = 600
         rr = w - 26
         plus = (rr - 34, 11, rr, 45)
         value = (plus[0] - 148, 11, plus[0] - 8, 45)
@@ -209,7 +236,9 @@ class ParamRow(tk.Canvas):
     # -- drawing ---------------------------------------------------------
     def _draw(self):
         self.delete("all")
-        w = self.winfo_width() or 600
+        w = self.winfo_width()
+        if w < 320:
+            w = 600
         z = self._zones()
 
         round_rect(self, 8, 6, w - 8, self.HEIGHT - 2, 12, fill=SHADOW, outline="")
@@ -220,10 +249,8 @@ class ParamRow(tk.Canvas):
             self.create_rectangle(9, 16, 12, self.HEIGHT - 16,
                                   fill=ACCENT, outline="")
 
-        name = self.name.title()
-        limit = z["minus"][0] - 40
-        while name and self.fonts["body"].measure(name) > limit - 28:
-            name = name[:-2] + "…"
+        name = fit_text(self.name.title(), self.fonts["body"],
+                        z["minus"][0] - 28 - 16)
         self.create_text(28, self.HEIGHT / 2, text=name, anchor="w",
                          fill=TEXT if self._enabled else FAINT,
                          font=self.fonts["body"])
@@ -231,10 +258,8 @@ class ParamRow(tk.Canvas):
         vx0, vy0, vx1, vy1 = z["value"]
         round_rect(self, vx0, vy0, vx1, vy1, 9,
                    fill=mix(CARD, "#000000", 0.28), outline="")
-        text = self.value or "-"
         font = self.fonts["value"]
-        while len(text) > 3 and font.measure(text) > (vx1 - vx0) - 14:
-            text = text[:-2] + "…"
+        text = fit_text(self.value or "-", font, (vx1 - vx0) - 14)
         self.create_text((vx0 + vx1) / 2, self.HEIGHT / 2, text=text, anchor="c",
                          fill=ACCENT_HI if self._enabled else FAINT, font=font)
 
@@ -400,11 +425,18 @@ class Worker(threading.Thread):
         self.do_read()
 
     def do_read(self):
-        self.say("reading every parameter from the ESC...")
-        entries = self.menu.walk()
-        self.out.put(("entries", entries))
-        self.say("%d parameters" % len([e for e in entries if e[0] not in ACTIONS]),
-                 "good")
+        self.say("reading the ESC's parameters, one step at a time...")
+        self.out.put(("entries_begin",))
+
+        def found(name, value, n):
+            if name not in ACTIONS:
+                self.out.put(("entry", name, value))
+            self.say("read %d so far: %s is %s" % (n, name.title(), value or "-"))
+
+        entries = self.menu.walk(on_found=found)
+        kept = [e for e in entries if e[0] not in ACTIONS]
+        self.out.put(("entries_end", len(kept)))
+        self.say("%d parameters, all read from the ESC" % len(kept), "good")
         self.out.put(("busy", False))
 
     def do_bump(self, name, forward):
@@ -656,20 +688,39 @@ class App(object):
         else:
             self.port_var.set("no serial ports found")
 
-    def show_entries(self, entries):
+    def begin_entries(self):
         for child in self.body.winfo_children():
             child.destroy()
         self.rows = {}
-        params = [(n, v) for n, v in entries if n not in ACTIONS]
-        for name, value in params:
-            row = ParamRow(self.body, name, value, self.on_bump, self.fonts)
-            row.pack(fill="x", pady=1)
-            self.rows[name] = row
-        note = tk.Label(self.body, bg=BG, fg=WARN, font=self.fonts["small"],
-                        justify="left", wraplength=680,
-                        text="A change takes effect at once, and is gone at the "
-                             "next power-up unless you press Save to ESC.")
-        note.pack(anchor="w", padx=22, pady=(14, 18))
+        self.note = None
+
+    def add_entry(self, name, value):
+        """One parameter, as soon as the ESC has given it up."""
+        if name in self.rows:
+            self.rows[name].set_value(value, changed=False)
+            return
+        row = ParamRow(self.body, name, value, self.on_bump, self.fonts)
+        row.set_enabled(not self.busy)
+        row.pack(fill="x", pady=1)
+        self.rows[name] = row
+        self.canvas.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def end_entries(self, count):
+        if getattr(self, "note", None) is None:
+            self.note = tk.Label(
+                self.body, bg=BG, fg=WARN, font=self.fonts["small"],
+                justify="left", wraplength=680,
+                text="A change takes effect at once, and is gone at the next "
+                     "power-up unless you press Save to ESC.")
+            self.note.pack(anchor="w", padx=22, pady=(14, 18))
+
+    def show_entries(self, entries):
+        self.begin_entries()
+        for name, value in entries:
+            if name not in ACTIONS:
+                self.add_entry(name, value)
+        self.end_entries(len(self.rows))
 
     def _drain(self):
         try:
@@ -680,6 +731,13 @@ class App(object):
                     self.say(msg[1], msg[2])
                 elif kind == "ports":
                     self.show_ports(msg[1])
+                elif kind == "entries_begin":
+                    self.begin_entries()
+                elif kind == "entry":
+                    self.add_entry(msg[1], msg[2])
+                elif kind == "entries_end":
+                    self.end_entries(msg[1])
+                    self.set_busy(False)
                 elif kind == "entries":
                     self.show_entries(msg[1])
                     self.set_busy(False)

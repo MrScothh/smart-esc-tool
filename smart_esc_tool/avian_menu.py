@@ -194,12 +194,17 @@ class AvianMenu(object):
         self.settle()
         return self.screen.entries()
 
-    def walk(self, limit=40):
+    def walk(self, limit=40, on_found=None):
         """Step through the whole list, collecting names and values.
 
         The screen shows a window onto a longer list, so the only way to see
         all of it is to move the cursor to the end. Stops when the cursor stops
-        moving, which is how the last entry announces itself.
+        moving, or when it wraps back to where it started.
+
+        `on_found` is called with each entry as it appears. Walking the list
+        costs a second per step and the better part of a minute in total, so an
+        interface that waits for the return value has nothing to show for most
+        of it, which looks exactly like a hang.
         """
         found = []
         seen = set()
@@ -212,6 +217,8 @@ class AvianMenu(object):
                 break                       # back where we started: the list wraps
             seen.add(here[0])
             found.append(here)
+            if on_found is not None:
+                on_found(here[0], here[1], len(found))
             last = here[0]
             self.next_entry()
             after = self.screen.selected()
