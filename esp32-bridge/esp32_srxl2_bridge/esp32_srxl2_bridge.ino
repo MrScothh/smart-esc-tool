@@ -31,15 +31,26 @@
 
 #include <Arduino.h>
 #include "driver/gpio.h"
+#include "esp_rom_gpio.h"
+#include "soc/uart_periph.h"
 
 /*
- * The single wire. Avoid the strapping pins (0, 2, 12, 15) and the pins the
- * flash uses (6..11); 17 is free on a DevKitC and on an S3. On a C3, which has
- * far fewer pins, use 4 or 5.
+ * The single wire.
+ *
+ * 18 rather than something lower because it has to be free on every ESP32 worth
+ * using here. Off limits: the strapping pins (0, 2, 12, 15), the flash pins
+ * (6..11), and - the one that is easy to miss - 16 and 17, which carry the
+ * PSRAM chip select and clock on every WROVER module. Espressif do not merely
+ * reserve those two, they usually do not bring them out to the header at all,
+ * so a wire soldered to "17" on a WROVER board is a wire soldered to nothing.
+ * On a C3, which has far fewer pins, use 4 or 5.
  */
 #ifndef WIRE_PIN
-#define WIRE_PIN            17
+#define WIRE_PIN            18
 #endif
+
+/* Serial1. Needed by name because the GPIO matrix is driven by hand below. */
+#define WIRE_UART           1
 
 #define USB_BAUD            921600
 #define WIRE_BAUD_DEFAULT   115200
@@ -57,6 +68,7 @@
 
 static uint32_t echoPending  = 0;   /* bytes we transmitted that must come back */
 static bool     reportEcho   = false;
+static bool     pwmActive    = false;
 
 static uint8_t  keepalive[KEEPALIVE_MAX];
 static uint8_t  keepaliveLen    = 0;
@@ -128,6 +140,77 @@ static void wireBegin(uint32_t baud)
      */
     gpio_set_pull_mode((gpio_num_t)WIRE_PIN, GPIO_PULLUP_ONLY);
     gpio_set_direction((gpio_num_t)WIRE_PIN, GPIO_MODE_INPUT);
+    esp_rom_gpio_connect_in_signal(WIRE_PIN,
+                                   UART_PERIPH_SIGNAL(WIRE_UART, SOC_UART_RX_PIN_IDX),
+                                   false);
+}
+
+/*
+ * Take the wire, or give it back.
+ *
+ * The re-routing is not decoration. gpio_set_direction() enables the pad's
+ * output by binding it to the plain GPIO output signal - the Arduino core does
+ * the same thing in esp32-hal-uart.c, `esp_rom_gpio_connect_out_signal(pin,
+ * SIG_GPIO_OUT_IDX, ...)` - which quietly unhooks the UART from the pad. A pad
+ * left like that sits at whatever the GPIO output register holds, which is low,
+ * so the receiver reads one framing error and nothing else. That is exactly what
+ * the self test caught: fourteen bytes sent, a single 0x00 back.
+ *
+ * So the transmit signal is bound again after every direction change. Releasing
+ * needs no such care, because turning the output off leaves the receive routing
+ * alone.
+ */
+static void wireDrive(bool driving)
+{
+    if (driving) {
+        gpio_set_direction((gpio_num_t)WIRE_PIN, GPIO_MODE_INPUT_OUTPUT);
+        esp_rom_gpio_connect_out_signal(WIRE_PIN,
+                                        UART_PERIPH_SIGNAL(WIRE_UART, SOC_UART_TX_PIN_IDX),
+                                        false, false);
+    } else {
+        gpio_set_direction((gpio_num_t)WIRE_PIN, GPIO_MODE_INPUT);
+    }
+}
+
+/*
+ * Drive the wire as an ordinary servo output instead of a serial port.
+ *
+ * Not part of the protocol - a continuity test that the ESC itself answers.
+ * A self test can only prove the loopback inside the chip: the echo comes back
+ * through the GPIO matrix whether or not the pad reaches anything, so a pin
+ * that is reserved, unbonded or simply not the one the wire is on passes it and
+ * teaches nothing. An ESC with no valid signal beeps, and an ESC that starts
+ * seeing 1000 us pulses stops and arms. That change of tune is the only
+ * evidence available that the wire goes where it is believed to go, and it does
+ * not depend on getting the protocol right first.
+ *
+ * Clamped well inside the servo range, and the caller is expected to ask for
+ * idle. The receive routing is put back on the way out, because attaching LEDC
+ * takes the pad over.
+ */
+static void wirePwm(uint16_t us)
+{
+    if (us == 0) {
+        if (pwmActive) {
+            ledcDetach(WIRE_PIN);
+            pwmActive = false;
+            gpio_set_pull_mode((gpio_num_t)WIRE_PIN, GPIO_PULLUP_ONLY);
+            gpio_set_direction((gpio_num_t)WIRE_PIN, GPIO_MODE_INPUT);
+            esp_rom_gpio_connect_in_signal(WIRE_PIN,
+                                           UART_PERIPH_SIGNAL(WIRE_UART, SOC_UART_RX_PIN_IDX),
+                                           false);
+        }
+        return;
+    }
+
+    if (us < 900)  { us = 900;  }
+    if (us > 2100) { us = 2100; }
+
+    if (!pwmActive) {
+        ledcAttach(WIRE_PIN, 50, 16);       /* 50 Hz, the servo frame rate */
+        pwmActive = true;
+    }
+    ledcWrite(WIRE_PIN, (uint32_t)(((uint64_t)us * 65535u) / 20000u));
 }
 
 static void wireSetBaud(uint32_t baud)
@@ -145,6 +228,9 @@ static void wireSetBaud(uint32_t baud)
 
 static void wireWrite(const uint8_t *data, size_t len)
 {
+    if (pwmActive) {
+        return;
+    }
     echoPending += len;
 
     /*
@@ -157,10 +243,10 @@ static void wireWrite(const uint8_t *data, size_t len)
      * count, since everything we sent is back in the receive FIFO by the time it
      * returns.
      */
-    gpio_set_direction((gpio_num_t)WIRE_PIN, GPIO_MODE_INPUT_OUTPUT);
+    wireDrive(true);
     Serial1.write(data, len);
     Serial1.flush();
-    gpio_set_direction((gpio_num_t)WIRE_PIN, GPIO_MODE_INPUT);
+    wireDrive(false);
 }
 
 /*---------------------------------------------------------------------------
@@ -201,6 +287,13 @@ static void handleCommand(const uint8_t *p, uint16_t len)
         }
         break;
     }
+
+    case 'P':
+        if (len >= 3) {
+            wirePwm((uint16_t)p[1] | ((uint16_t)p[2] << 8));
+            sendFrame('P', micros(), NULL, 0);
+        }
+        break;
 
     case 'E':
         reportEcho = (len >= 2 && p[1]);

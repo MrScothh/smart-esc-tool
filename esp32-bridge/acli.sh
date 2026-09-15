@@ -12,8 +12,10 @@ ROOT="/d/personal/Tesi/firmware/tools-local/arduino-cli"
 export ARDUINO_DIRECTORIES_DATA="$ROOT/data"
 export ARDUINO_DIRECTORIES_DOWNLOADS="$ROOT/downloads"
 export ARDUINO_DIRECTORIES_USER="$ROOT/user"
+# the sketch build cache would otherwise land in the user profile
+export ARDUINO_DIRECTORIES_BUILDS="$ROOT/builds"
 export ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS="https://espressif.github.io/arduino-esp32/package_esp32_index.json"
 
-mkdir -p "$ARDUINO_DIRECTORIES_DATA" "$ARDUINO_DIRECTORIES_DOWNLOADS" "$ARDUINO_DIRECTORIES_USER"
+mkdir -p "$ARDUINO_DIRECTORIES_DATA" "$ARDUINO_DIRECTORIES_DOWNLOADS" \n         "$ARDUINO_DIRECTORIES_USER" "$ARDUINO_DIRECTORIES_BUILDS"
 
 exec "$ROOT/arduino-cli.exe" "$@"

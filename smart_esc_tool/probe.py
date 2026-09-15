@@ -6,6 +6,11 @@
     smart-esc-tool COM5 link 0x40    - handshake, negotiate 400000, hold it
     smart-esc-tool COM5 telem 0x40   - poll telemetry and decode it
     smart-esc-tool COM5 param 0x40   - the undocumented 0x50 reply
+    smart-esc-tool COM5 config        - open the ESC's own menu and read it
+    smart-esc-tool COM5 set "BRAKE TYPE=Reverse"
+    smart-esc-tool COM5 menu          - scroll the whole list, not just the window
+    smart-esc-tool COM5 save "BRAKE TYPE=Reverse"   - change it and keep it
+    smart-esc-tool COM5 reset         - restore the ESC's defaults
 
 Add --via inav to go through a flight controller running INAV instead of the
 ESP32 adapter; the port is then the board's, and it needs a port assigned to
@@ -182,6 +187,75 @@ def param(br, dev, first=0, count=8):
         _log(events, "      ")
 
 
+def config(br, dev=None, assignments=(), finish=None):
+    """Open the ESC's on-screen menu, read it, and optionally change it.
+
+    The menu is the ESC's own: names, current values and a cursor, sent as
+    telemetry. Reading a value back is something stick programming cannot do,
+    so this is the only way for a tool to report what an ESC is actually set
+    to rather than what it was last told.
+    """
+    from .avian_menu import AvianMenu, MenuError
+
+    br.set_baud(srxl2.BAUD_LOW)
+    br.reset()
+    br.report_echo(False)
+
+    menu = AvianMenu(br, dev, log=lambda m: print("    %s" % m))
+    menu.enter()
+    print("    %s" % (menu.screen.title() or "menu"))
+    for name, value, selected in menu.settings():
+        print("    %s %-14s %s" % (">" if selected else " ", name, value))
+
+    for text in assignments:
+        if "=" not in text:
+            print("    not an assignment: %r" % text)
+            continue
+        name, _, value = text.partition("=")
+        try:
+            got = menu.set(name, value)
+            print("    %s -> %s" % (name.strip(), got))
+        except MenuError as exc:
+            print("    %s" % exc)
+
+    if assignments:
+        print("    after:")
+        for name, value, selected in menu.settings():
+            print("    %s %-14s %s" % (">" if selected else " ", name, value))
+
+    if finish:
+        # Without this the ESC forgets everything on the next power cycle: the
+        # values change on screen immediately, but only this entry writes them.
+        menu.activate(finish)
+        print("    %s" % finish)
+    return menu
+
+
+def walk(br, dev=None):
+    """Scroll the cursor to the end, listing every parameter it passes.
+
+    The screen is a five-line window onto a longer list, so what a single read
+    shows is not what the ESC offers. Whatever ends the list - a save entry, an
+    exit, or simply the last parameter - is only visible from down there.
+    """
+    from .avian_menu import AvianMenu
+
+    br.set_baud(srxl2.BAUD_LOW)
+    br.reset()
+    br.report_echo(False)
+
+    menu = AvianMenu(br, dev, log=lambda m: print("    %s" % m))
+    menu.enter()
+    found = menu.walk()
+    print("    %d entries:" % len(found))
+    for i, (name, value) in enumerate(found, 1):
+        print("    %2d  %-16s %s" % (i, name, value))
+    print("    screen at the end:")
+    for line in menu.screen.render().splitlines():
+        print("      %s" % line)
+    return menu
+
+
 def main():
     argv = [a for a in sys.argv[1:] if a != "--via"]
     via = "inav" if "--via" in sys.argv and "inav" in argv else "esp32"
@@ -191,7 +265,12 @@ def main():
         print(__doc__)
         return 1
     port, step = argv[0], argv[1]
-    dev = int(argv[2], 0) if len(argv) > 2 else srxl2.ESC_ID_FIRST
+    dev = srxl2.ESC_ID_FIRST
+    if len(argv) > 2 and step not in ("set", "save"):
+        try:
+            dev = int(argv[2], 0)
+        except ValueError:
+            pass
 
     with open_transport(via, port) as br:
         print("== %s (via %s) ==" % (step, via))
@@ -213,6 +292,16 @@ def main():
             telem(br, dev)
         elif step == "param":
             param(br, dev)
+        elif step == "config":
+            config(br)
+        elif step == "menu":
+            walk(br)
+        elif step == "save":
+            config(br, assignments=argv[2:], finish="EXIT W/ SAVE")
+        elif step == "reset":
+            config(br, finish="DEFAULT/EXIT")
+        elif step == "set":
+            config(br, assignments=argv[2:])
         else:
             print(__doc__)
             return 1

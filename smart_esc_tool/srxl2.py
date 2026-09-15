@@ -29,6 +29,15 @@ BAUD_LOW  = 115200
 BAUD_HIGH = 400000
 BAUD_BIT_400K = 0x01
 
+# X-Bus telemetry sensor IDs. An Avian relays more than its own: with the ESC
+# frames come Smart Battery ones, which carry a different structure entirely and
+# decode as nonsense if taken for ESC data - rpm in the hundreds of thousands.
+# The firmware checks this byte before decoding; so must anything else.
+TELEM_SENSOR_ESC       = 0x20
+TELEM_SENSOR_SMART_BAT = 0x42
+
+TELEM_SENSOR_NAMES = {TELEM_SENSOR_ESC: "ESC", TELEM_SENSOR_SMART_BAT: "SmartBattery"}
+
 THROTTLE_CHANNEL = 0     # CH1, per Spektrum: "the ESC will always look at CH 1"
 
 PACKET_NAMES = {
@@ -173,6 +182,11 @@ def describe(frame):
                 "uid=0x%08X%s" % (body[0], body[1], body[2], body[3], body[4],
                                   int.from_bytes(body[5:9], "little"), ok))
     if frame[1] == TELEMETRY and len(body) >= 17:
+        sensor = body[1]
+        if sensor != TELEM_SENSOR_ESC:
+            return "Telemetry  dst=0x%02X sensor=0x%02X %s  %s%s" % (
+                body[0], sensor, TELEM_SENSOR_NAMES.get(sensor, "not decoded"),
+                body[2:].hex(" "), ok)
         t = decode_esc_telemetry(body[1:])
         return "Telemetry  dst=0x%02X sensor=0x%02X %s%s" % (
             body[0], t["sensor_id"],
