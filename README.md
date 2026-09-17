@@ -56,34 +56,12 @@ negotiate 115200 up to 400000 straight through it. The session ends with `+++`.
 
 Nothing needs adding to INAV for this; the passthrough has been there for years.
 
-## What the ESC turned out to be like
-
-Four things the specification does not tell you, all measured, all of which shape
-how the tool has to behave:
-
-* **It introduces itself once.** An Avian announces itself six times in the 300 ms
-  after it gains power and is silent from then on. It never speaks unprompted. So
-  the tool has to be running and talking before the ESC is powered, and a board
-  that reboots underneath a powered ESC will never link to it.
-* **The link dies in about a quarter of a second** without a frame, and comes back
-  as soon as frames resume, with the throttle picking up where it left off. This
-  is why the transport is fed by a thread that does nothing else.
-* **Asking for telemetry too often stops it taking throttle.** Requesting on every
-  frame leaves the ESC holding the link and refusing to run. Asking every second
-  frame or less often is fine. The ESC answers about two requests in three and
-  rotates between three sensor types, so its own data arrives at roughly the
-  request rate divided by nine.
-* **The throttle percentage it reports is the command measured against its own
-  learned endpoints**, not an echo. Calibrated to 1800 us it reports 25, 50, 75,
-  100 and 100 per cent for 1200 to 2000; calibrated to 2000 it reports 20, 40, 60,
-  80, 100. That makes it the cheapest way to read back where calibration left the
-  endpoint.
-
-Also worth knowing before the first run: the startup tones last about five seconds
-after the announcement, and the motor will not turn until the last of them has
-sounded.
-
 ## Running it
+
+**Start the tool first, then power the ESC.** An Avian introduces itself in the
+moment after it gains power and is silent from then on, so anything that begins
+listening later finds a wire with nothing on it. If a session will not link, cycle
+the ESC's power with the tool already running.
 
 A window:
 
