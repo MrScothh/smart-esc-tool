@@ -9,21 +9,21 @@ be done over any serial port, including the one already inside an aeroplane.
 
 ## Status
 
-Configuration works, and has been exercised against a real ESC on a bench with a
-programmable supply and an oscilloscope. What has been done, on hardware:
+Configuration works, and has been exercised against a real ESC on a bench through
+the ESP32 adapter. What the tool itself has done, on hardware:
 
 * the handshake, and the link that follows it
 * telemetry decoded and read back: rpm, current, voltage, throttle
 * the stick-programming menu walked, settings read, changed and saved
-* the throttle driven across its whole range, with the supply's current as the
-  witness rather than the ESC's own word
-* thrust reverse engaged and released, at rest and while the motor was turning
-* endpoint calibration, checked by moving the ESC's full-throttle point to
-  1800 us and back to 2000 us and measuring the scale each time
+
+The tool holds the throttle at idle and commands nothing else. It configures an
+ESC; it does not fly one, and there is no throttle command to look for.
 
 What has **not** been done: updating firmware, which is described below and is
-still a goal rather than a feature. The flight-controller route has also not been
-run against a real board yet; the bench work all went through the ESP32 adapter.
+still a goal rather than a feature. Neither has the flight-controller route. The
+ESP32 adapter reproduces the wire a flight controller's SRXL2 port presents, so
+the protocol above it is the same either way, but the passthrough is separate
+software running inside the board and none of it has been exercised.
 
 ## Why
 
