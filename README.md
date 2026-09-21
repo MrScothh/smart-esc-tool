@@ -20,9 +20,10 @@ The tool holds the throttle at idle and commands nothing else. It configures an
 ESC; it does not fly one, and there is no throttle command to look for.
 
 Through a flight controller, on a TBS Lucid H7 Wing running INAV with an Avian on
-one of its ports: the handshake, telemetry and the whole settings menu read back.
-Changing and saving a setting that way has not been tried, and neither has a bus
-at 400000, because that Avian offers only 115200 in its handshake.
+one of its ports: the handshake, telemetry and the whole settings menu read back,
+and a setting changed, saved, and still there after the ESC was power cycled. A
+bus at 400000 has not been tried, because that Avian offers only 115200 in its
+handshake.
 
 What has **not** been done: updating firmware, which is described below and is
 still a goal rather than a feature.
@@ -68,6 +69,10 @@ until it is power cycled, and the wire stays at the rate the port was set to.
 moment after it gains power and is silent from then on, so anything that begins
 listening later finds a wire with nothing on it. If a session will not link, cycle
 the ESC's power with the tool already running.
+
+The same goes for the flight controller afterwards: once a session has ended, its
+own driver gets no telemetry from the ESC until the ESC has been power cycled. On an
+aircraft that is the battery coming out, which happens anyway.
 
 A window:
 
