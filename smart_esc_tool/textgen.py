@@ -41,7 +41,8 @@ class Screen(object):
         """Take one TextGen payload (sID, row, text). True if anything changed.
 
         `payload` is the telemetry body from the sensor byte onward, so
-        payload[0] is the sensor id and payload[1] the row number. Getting this
+        payload[0] is the sensor id, payload[1] the sID and payload[2] the row
+        number. Getting this
         offset wrong puts every row in slot zero, where they overwrite each
         other and the screen looks like it is flickering between unrelated
         phrases.

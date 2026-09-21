@@ -35,8 +35,10 @@ BAUD_BIT_400K = 0x01
 # The firmware checks this byte before decoding; so must anything else.
 TELEM_SENSOR_ESC       = 0x20
 TELEM_SENSOR_SMART_BAT = 0x42
+TELEM_SENSOR_TEXTGEN   = 0x0C     # one screen row per frame, see textgen.py
 
-TELEM_SENSOR_NAMES = {TELEM_SENSOR_ESC: "ESC", TELEM_SENSOR_SMART_BAT: "SmartBattery"}
+TELEM_SENSOR_NAMES = {TELEM_SENSOR_ESC: "ESC", TELEM_SENSOR_SMART_BAT: "SmartBattery",
+                      TELEM_SENSOR_TEXTGEN: "TextGen"}
 
 THROTTLE_CHANNEL = 0     # CH1, per Spektrum: "the ESC will always look at CH 1"
 
@@ -183,6 +185,11 @@ def describe(frame):
                                   int.from_bytes(body[5:9], "little"), ok))
     if frame[1] == TELEMETRY and len(body) >= 17:
         sensor = body[1]
+        if sensor == TELEM_SENSOR_TEXTGEN:
+            # dest, sensor, sID, row, then the thirteen characters of that row
+            text = "".join(chr(c) if 32 <= c < 127 else " " for c in body[4:17]).rstrip()
+            return 'Telemetry  dst=0x%02X sensor=0x%02X TextGen row %d "%s"%s' % (
+                body[0], sensor, body[3], text, ok)
         if sensor != TELEM_SENSOR_ESC:
             return "Telemetry  dst=0x%02X sensor=0x%02X %s  %s%s" % (
                 body[0], sensor, TELEM_SENSOR_NAMES.get(sensor, "not decoded"),

@@ -19,11 +19,13 @@ the ESP32 adapter. What the tool itself has done, on hardware:
 The tool holds the throttle at idle and commands nothing else. It configures an
 ESC; it does not fly one, and there is no throttle command to look for.
 
+Through a flight controller, on a TBS Lucid H7 Wing running INAV with an Avian on
+one of its ports: the handshake, telemetry and the whole settings menu read back.
+Changing and saving a setting that way has not been tried, and neither has a bus
+at 400000, because that Avian offers only 115200 in its handshake.
+
 What has **not** been done: updating firmware, which is described below and is
-still a goal rather than a feature. Neither has the flight-controller route. The
-ESP32 adapter reproduces the wire a flight controller's SRXL2 port presents, so
-the protocol above it is the same either way, but the passthrough is separate
-software running inside the board and none of it has been exercised.
+still a goal rather than a feature.
 
 ## Why
 
@@ -50,11 +52,15 @@ arrived but not when.
 Spektrum Smart ESC can hand that port to a PC: `MSP_SET_PASSTHROUGH` with the
 serial function id bridges the USB connection straight to the ESC's wire. The
 flight controller's own scheduler stops while it does this, so nothing transmits
-over the session, the port stays in single-wire half duplex, and the host's baud
-rate is mirrored onto the wire every 15 ms, which means the SRXL2 handshake can
-negotiate 115200 up to 400000 straight through it. The session ends with `+++`.
+over the session, and the port stays in single-wire half duplex.
 
-Nothing needs adding to INAV for this; the passthrough has been there for years.
+Two more things the passthrough is meant to do need a fix in INAV to happen over
+MSP, iNavFlight/inav#12003: ending the session with `+++`, and mirroring the
+host's baud rate onto the wire every 15 ms, which is what lets the SRXL2
+handshake negotiate 115200 up to 400000 straight through it. INAV applies both to
+the first port it is given, and the MSP passthrough gave it the ESC's. Without
+the fix everything above still works, but the board stays in the passthrough
+until it is power cycled, and the wire stays at the rate the port was set to.
 
 ## Running it
 
