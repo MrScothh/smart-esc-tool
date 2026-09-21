@@ -46,9 +46,16 @@ def _log(events, prefix="    "):
             print("%sERROR    %s" % (prefix, e.data.decode("ascii", "replace")))
 
 
-def _frames(events):
+def _frames(events, sent=()):
+    """Whole frames received, less any that is byte for byte one in `sent`.
+
+    Through a flight controller the wire is single and nothing mutes the
+    receiver while it transmits, so what we just said arrives as received data
+    too, ahead of any answer. Taken for a reply, a handshake of ours reads as a
+    device offering 400000.
+    """
     stream = b"".join(e.data for e in events if e.tag == ord("R"))
-    return srxl2.split(stream)[0]
+    return [f for f in srxl2.split(stream)[0] if bytes(f) not in sent]
 
 
 def _hold(br, frame, period_ms, seconds, prefix="    "):
@@ -117,9 +124,10 @@ def find(br):
     itself, so this is the only way to find it."""
     br.reset()
     for dev in range(srxl2.ESC_ID_FIRST, srxl2.ESC_ID_LAST + 1):
-        br.write(srxl2.handshake(dev, srxl2.BAUD_BIT_400K))
+        ours = srxl2.handshake(dev, srxl2.BAUD_BIT_400K)
+        br.write(ours)
         events = br.collect(0.08)
-        frames = _frames(events)
+        frames = _frames(events, sent={ours})
         if frames:
             print("  0x%02X answers:" % dev)
             _log(events, "      ")
@@ -140,11 +148,12 @@ def link(br, dev, hold=5.0):
     br.report_echo(False)
 
     print("  handshake to 0x%02X at 115200" % dev)
-    br.write(srxl2.handshake(dev, srxl2.BAUD_BIT_400K))
+    ours = srxl2.handshake(dev, srxl2.BAUD_BIT_400K)
+    br.write(ours)
     events = br.collect(0.2)
     _log(events)
 
-    reply = _frames(events)
+    reply = _frames(events, sent={ours})
     supported = reply[0][6] if reply and len(reply[0]) > 6 else 0
     print("  ESC advertises baud bits 0x%02X" % supported)
     if not supported & srxl2.BAUD_BIT_400K:
@@ -182,7 +191,7 @@ def param(br, dev, first=0, count=8):
         frame = srxl2.param_query(dev, pid)
         br.write(frame)
         events = br.collect(0.15)
-        frames = _frames(events)
+        frames = _frames(events, sent={frame})
         print("  param %2d  %s" % (pid, "no reply" if not frames else ""))
         _log(events, "      ")
 
