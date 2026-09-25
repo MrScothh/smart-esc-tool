@@ -33,6 +33,7 @@ from qfluentwidgets import (BodyLabel, CaptionLabel, ComboBox, FluentIcon,
 from . import discover
 from .avian_menu import AvianMenu, MenuError
 from .transport import open_transport
+from .transport.inav import esc_linked
 
 ACTIONS = ("EXIT W/ SAVE", "DEFAULT/EXIT", "EXIT")
 
@@ -66,6 +67,8 @@ class Worker(threading.Thread):
         self.out = queue.Queue()
         self.br = None
         self.menu = None
+        self.kind = None
+        self.device = None
 
     def say(self, text, tone="info"):
         self.out.put(("status", text, tone))
@@ -103,6 +106,7 @@ class Worker(threading.Thread):
     def do_connect(self, device, kind):
         self.close()
         self.say("Opening %s" % device)
+        self.kind, self.device = kind, device
         self.br = open_transport("inav" if kind == "inav" else "esp32", device)
         from . import srxl2
         self.br.set_baud(srxl2.BAUD_LOW)
@@ -151,7 +155,13 @@ class Worker(threading.Thread):
         else:
             self.say("Left the menu without writing anything", "warn")
         self.close()
-        self.out.put(("closed", name))
+        linked = None
+        if self.kind == "inav":
+            # Leaving restarts the ESC; whether the flight controller caught it
+            # again is something to ask, not to assume
+            self.say("Asking the flight controller whether it has the ESC again")
+            linked = esc_linked(self.device)
+        self.out.put(("closed", name, linked))
         self.out.put(("busy", False))
 
     def close(self):
@@ -226,6 +236,9 @@ class Window(QWidget):
         self.ports = []
         self.cards = {}
         self.busy = False
+        # Save, defaults and leave act on an open menu; without one they have
+        # nothing to act on
+        self.menu_open = False
 
         self.setWindowTitle("Smart ESC Tool")
         self.resize(880, 700)
@@ -301,11 +314,16 @@ class Window(QWidget):
         self.page_layout.addWidget(self.group)
 
         self.empty = BodyLabel(
-            "Plug in a flight controller running INAV, or the SRXL2 adapter, "
+            "Plug in a flight controller running INAV, or the SRXL2 adapter,\n"
             "then choose it above and press Connect.", self.page)
         self.empty.setWordWrap(True)
         self.empty.setAlignment(Qt.AlignCenter)
-        self.page_layout.addWidget(self.empty)
+        # A measure that reads as a paragraph: at full window width a message
+        # of two sentences leaves a single word on its second line. Fixed,
+        # because a centred label otherwise shrinks to Qt's guess at a width,
+        # and 560 still fits the narrowest the window may be
+        self.empty.setFixedWidth(560)
+        self.page_layout.addWidget(self.empty, 0, Qt.AlignHCenter)
         self.page_layout.addStretch(1)
 
         # Two stretches would fight each other, so only one is ever active:
@@ -368,9 +386,9 @@ class Window(QWidget):
     def set_busy(self, busy):
         self.busy = busy
         self.progress.setVisible(busy)
-        for b in (self.connect_button, self.save_button,
-                  self.defaults_button, self.leave_button):
-            b.setEnabled(not busy)
+        self.connect_button.setEnabled(not busy)
+        for b in (self.save_button, self.defaults_button, self.leave_button):
+            b.setEnabled(not busy and self.menu_open)
         for card in self.cards.values():
             card.set_enabled(not busy)
 
@@ -401,6 +419,7 @@ class Window(QWidget):
                         "%s did not answer a question only the right board can."
                         % found.device, "warn")
             return
+        self.menu_open = False
         self.set_busy(True)
         self.say("Connecting to %s" % found.device)
         self.worker.jobs.put(("connect", found.device, found.kind))
@@ -497,6 +516,7 @@ class Window(QWidget):
                     self.add_entry(msg[1], msg[2])
                 elif kind == "entries_end":
                     self.end_entries(msg[1])
+                    self.menu_open = True
                     self.set_busy(False)
                 elif kind == "value":
                     if msg[1] in self.cards:
@@ -505,10 +525,25 @@ class Window(QWidget):
                 elif kind == "linked":
                     self.subtitle.setText("ESC 0x%02X, menu open" % msg[1])
                 elif kind == "closed":
+                    self.menu_open = False
                     self.subtitle.setText("Spektrum Avian over SRXL2")
-                    self.show_disconnected(
-                        "The ESC has left its menu. Switch it off and on, "
-                        "then press Connect to go back in.")
+                    if msg[2] is True:
+                        self.say("The flight controller has the ESC again", "good")
+                        self.show_disconnected(
+                            "The ESC has left its menu and the flight controller "
+                            "has it again.\nPress Connect to go back in.")
+                    elif msg[2] is False:
+                        self.say("The flight controller does not see the ESC", "bad")
+                        self.notify("Switch the ESC off and on",
+                                    "INAV will not arm until the ESC is back.", "bad")
+                        self.show_disconnected(
+                            "The ESC has left its menu, but the flight controller "
+                            "does not see it.\nSwitch the ESC off and on before "
+                            "flying: INAV will not arm until you do.")
+                    else:
+                        self.show_disconnected(
+                            "The ESC has left its menu.\nSwitch it off and on, "
+                            "then press Connect to go back in.")
                 elif kind == "busy":
                     self.set_busy(msg[1])
         except queue.Empty:
