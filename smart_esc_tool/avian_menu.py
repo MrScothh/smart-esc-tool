@@ -71,7 +71,7 @@ class AvianMenu(object):
             now = time.monotonic()
             if now >= end:
                 return
-            if now >= nxt:
+            if self.device is not None and now >= nxt:
                 nxt = now + 0.02
                 # Telemetria a ogni frame: qui serve la pagina di testo il piu'
                 # in fretta possibile, ed e' l'unica cosa che l'ESC risponde. Il
@@ -79,14 +79,20 @@ class AvianMenu(object):
                 # ma smette di ubbidire al gas - va bene per un menu, dove il
                 # motore deve stare fermo, e non va bene in volo. Il driver di
                 # INAV infatti non scende mai sotto un frame su due.
+                #
+                # Solo dopo che l'ESC si e' fatto riconoscere: un Avian che
+                # sente control data da un master con cui non ha fatto
+                # l'handshake tace, e smette anche di annunciarsi, che e'
+                # proprio quello che connect() aspetta.
                 self.br.write(srxl2.control_data(self._channels,
-                                                 reply_id=self.device or 0))
+                                                 reply_id=self.device))
             if self.device is None and now >= nxt_hs:
                 nxt_hs = now + 0.1
-                # Un ESC gia' avviato non si annuncia piu' da solo: la finestra
-                # in cui lo fa e' subito dopo l'accensione. Chi arriva dopo -
-                # che e' il caso normale, aereo acceso e cavo USB collegato -
-                # deve chiamarlo, e l'indirizzo non e' noto in anticipo.
+                # Un Avian senza master si annuncia da solo, una ventina di
+                # volte al secondo: succede dopo l'accensione e ogni volta che
+                # smette di sentire la FC, come quando INAV apre il passthrough.
+                # Chiamarlo copre il caso in cui tace lo stesso, e l'indirizzo
+                # non e' noto in anticipo.
                 self.br.write(srxl2.handshake(self._probe, srxl2.BAUD_BIT_400K))
                 self._probe += 1
                 if self._probe > srxl2.ESC_ID_LAST:
@@ -117,11 +123,12 @@ class AvianMenu(object):
     def connect(self, timeout=45.0):
         """Wait for an ESC to answer, saying so while it waits.
 
-        The window is generous because the thing it is waiting for is usually a
-        person reaching for a switch: an Avian announces itself for a few
-        seconds after power-up and then goes quiet, so the useful behaviour is
-        to still be listening whenever that happens rather than to give up on a
-        schedule of our own.
+        An Avian with no master announces itself about twenty times a second:
+        after power-up, and whenever the flight controller stops talking to it,
+        which is what opening INAV's passthrough does. Nothing but probes goes
+        out until one of those is heard, because control data from a master it
+        has not shaken hands with silences it. The window is generous for the
+        case where it is not powered yet and a person is reaching for a switch.
         """
         start = time.monotonic()
         end = start + timeout
