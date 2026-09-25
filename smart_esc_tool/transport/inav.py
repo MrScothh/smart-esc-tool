@@ -24,6 +24,7 @@ comes back. That is handled here the same way the ESP32 handles it, by counting.
 """
 
 import socket
+import struct
 import time
 
 import serial
@@ -101,6 +102,61 @@ def _msp_request(cmd, payload=b""):
     for b in body:
         crc ^= b
     return b"$M<" + body + bytes([crc])
+
+
+#: INAV's report on its SRXL2 ESC link: calibration phase, then 1 if linked.
+MSP2_INAV_ESC_SRXL2_STATUS = 0x2233
+
+
+def _msp2_request(cmd, payload=b""):
+    body = struct.pack("<BHH", 0, cmd, len(payload)) + payload
+    crc = 0
+    for b in body:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0xD5) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return b"$X<" + body + bytes([crc])
+
+
+def esc_linked(port, wait=4.0, baud=115200):
+    """After a session: does the flight controller have the ESC again?
+
+    Leaving the ESC's menu restarts it, and it announces itself for less than a
+    second; ending the passthrough takes INAV two seconds of silence. So whether
+    the flight controller picks the ESC up afterwards is a question with a real
+    answer either way, and the aircraft must not fly on a guess.
+
+    True once INAV reports the link, False if it has not within `wait` seconds,
+    None if the board never answered or does not know the command.
+    """
+    host_port = _split_host_port(port)
+    link = _Tcp(host_port[0], host_port[1], 0.05) if host_port else \
+        serial.Serial(port, baud, timeout=0.05)
+    answered = False
+    try:
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            link.reset_input_buffer()
+            link.write(_msp2_request(MSP2_INAV_ESC_SRXL2_STATUS))
+            link.flush()
+            buf = bytearray()
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline:
+                buf += link.read(64)
+                i = buf.find(b"$X>")
+                if i >= 0 and len(buf) >= i + 10:
+                    size = struct.unpack("<H", bytes(buf[i + 6:i + 8]))[0]
+                    if size >= 2 and len(buf) >= i + 8 + size:
+                        answered = True
+                        if buf[i + 9]:
+                            return True
+                        break
+                if buf.find(b"$X!") >= 0:
+                    return None     # a firmware without the command
+            time.sleep(0.2)
+    finally:
+        link.close()
+    return False if answered else None
 
 
 class InavPassthrough:
@@ -264,7 +320,10 @@ class InavPassthrough:
             time.sleep(1.1)
             self.ser.write(b"+++")
             self.ser.flush()
-            time.sleep(0.3)
+            # And a second of silence after it, which is when INAV actually
+            # leaves: any byte before then, from here or from whoever opens the
+            # port next, resets the escape and the board stays in passthrough.
+            time.sleep(1.2)
         finally:
             self.ser.close()
 

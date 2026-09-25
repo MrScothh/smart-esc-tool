@@ -267,6 +267,29 @@ def walk(br, dev=None):
     return menu
 
 
+def _report_handover(port, step):
+    """What the aircraft is left with once the session is over.
+
+    Through a flight controller that is the question that matters: in its menu
+    the ESC ignores the throttle while INAV still counts it as connected, and
+    after leaving the menu it may not be on the bus at all.
+    """
+    from .transport.inav import esc_linked
+
+    if step == "set":
+        print("    the ESC is still in its menu and ignores the throttle until")
+        print("    you save, reset, or switch it off and on")
+        return
+    linked = esc_linked(port)
+    if linked:
+        print("    the flight controller has the ESC again")
+    elif linked is False:
+        print("    the flight controller does not see the ESC: switch the ESC")
+        print("    off and on before flying. INAV will not arm until you do")
+    else:
+        print("    could not ask the flight controller whether it has the ESC")
+
+
 def main():
     argv = [a for a in sys.argv[1:] if a != "--via"]
     via = "inav" if "--via" in sys.argv and "inav" in argv else "esp32"
@@ -304,9 +327,14 @@ def main():
         elif step == "param":
             param(br, dev)
         elif step == "config":
-            config(br)
+            # Reading is not a reason to stay: in its menu the ESC ignores the
+            # throttle until it leaves or loses power, and on an aeroplane the
+            # next thing after reading the settings is flying it.
+            config(br, finish="EXIT")
         elif step == "menu":
-            walk(br)
+            menu = walk(br)
+            menu.activate("EXIT")
+            print("    EXIT")
         elif step == "save":
             config(br, assignments=argv[2:], finish="EXIT W/ SAVE")
         elif step == "reset":
@@ -316,6 +344,8 @@ def main():
         else:
             print(__doc__)
             return 1
+    if via == "inav" and step in ("config", "menu", "save", "reset", "set"):
+        _report_handover(port, step)
     return 0
 
 

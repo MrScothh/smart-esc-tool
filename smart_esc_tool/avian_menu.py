@@ -57,6 +57,8 @@ class AvianMenu(object):
         self._channels = dict((i, MID) for i in range(8))
         self._channels[THROTTLE] = LOW
         self._probe = srxl2.ESC_ID_FIRST
+        self._probing = True
+        self._last_telemetry = 0.0
 
     # ------------------------------------------------------------------- wire
     def _pump(self, seconds):
@@ -86,7 +88,7 @@ class AvianMenu(object):
                 # proprio quello che connect() aspetta.
                 self.br.write(srxl2.control_data(self._channels,
                                                  reply_id=self.device))
-            if self.device is None and now >= nxt_hs:
+            if self.device is None and self._probing and now >= nxt_hs:
                 nxt_hs = now + 0.1
                 # Un Avian senza master si annuncia da solo, una ventina di
                 # volte al secondo: succede dopo l'accensione e ogni volta che
@@ -116,6 +118,7 @@ class AvianMenu(object):
                 self.br.write(srxl2.handshake(srxl2.BROADCAST, 0))
                 self.log("ESC 0x%02X" % self.device)
         elif frame[1] == srxl2.TELEMETRY and len(body) >= 4:
+            self._last_telemetry = time.monotonic()
             if body[1] == TEXTGEN_SENSOR and self.screen.feed(body[1:]):
                 self._last_change = time.monotonic()
 
@@ -297,13 +300,48 @@ class AvianMenu(object):
 
         Nothing is read back afterwards on purpose: these entries end the menu
         session, so the screen that follows is no longer a menu.
+
+        Leaving restarts the ESC, and it announces itself again for well under a
+        second (on the bench, from 0.17 to 0.89 s after the entry took) before
+        going quiet for good. Whoever is on the wire has to shake hands inside
+        that window, or the ESC stays off the bus until its battery is cycled,
+        and that includes the flight controller. So the link is picked up again
+        here, and counts only once telemetry comes back: a handshake that did
+        not take leaves an ESC that control data then silences. Closing the
+        session hands the link over, because an Avian that loses its master
+        announces itself for as long as nobody answers (over 6 s, measured).
         """
         self.goto(name)
         self.log("activating %s" % name)
         self._channels[AILERON] = HIGH
         self._pump(PULSE)
         self._channels[AILERON] = MID
-        self._pump(1.5)
+        self._pump(0.25)
+
+        # Listen only: it announces by itself now, and a probe on the single
+        # wire can land on top of an announcement
+        self._probing = False
+        found = False
+        end = time.monotonic() + 3.0
+        try:
+            while not found and time.monotonic() < end:
+                self.device = None
+                while self.device is None and time.monotonic() < end:
+                    self._pump(0.02)
+                if self.device is None:
+                    break
+                linked = time.monotonic()
+                self._pump(0.3)
+                found = self._last_telemetry > linked
+        finally:
+            self._probing = True
+        if found:
+            # A full second of link before the session ends, as measured: an
+            # ESC held that long announced itself for the whole 6 s that
+            # followed, which is what the flight controller needs to take over
+            self._pump(0.7)
+        else:
+            self.log("the ESC did not come back after %s: cycle its battery" % name)
         return self.screen
 
     def set(self, name, value, limit=12):

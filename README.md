@@ -65,14 +65,27 @@ until it is power cycled, and the wire stays at the rate the port was set to.
 
 ## Running it
 
-**Start the tool first, then power the ESC.** An Avian introduces itself in the
-moment after it gains power and is silent from then on, so anything that begins
-listening later finds a wire with nothing on it. If a session will not link, cycle
-the ESC's power with the tool already running.
+**Through a flight controller the ESC can stay powered.** An Avian that stops
+hearing its master announces itself about twenty times a second, and opening the
+passthrough is exactly that, so the tool finds it at once.
 
-The same goes for the flight controller afterwards: once a session has ended, its
-own driver gets no telemetry from the ESC until the ESC has been power cycled. On an
-aircraft that is the battery coming out, which happens anyway.
+**Through the ESP32, start the tool first, then power the ESC.** An Avian with no
+master to lose introduces itself in the moment after it gains power and is silent
+from then on, so anything that begins listening later finds a wire with nothing on
+it. If a session will not link, cycle the ESC's power with the tool already
+running.
+
+**Leaving the menu restarts the ESC**, and it then announces itself for less than
+a second. The tool shakes hands with it inside that window, but ending INAV's
+passthrough takes two seconds of silence on the wire, and the flight controller
+does not always catch the ESC afterwards. So after `config`, `menu`, `save` or
+`reset` through a flight controller the tool asks INAV whether it has the ESC
+again, and says so. If it has not, switch the ESC off and on before flying; INAV
+will not arm until it sees the ESC.
+
+`set` leaves the ESC in its menu, where it ignores the throttle while INAV still
+counts it as connected. Follow it with `save`, `reset` or a power cycle before
+flying.
 
 A window:
 
@@ -96,8 +109,10 @@ ESP32 adapter:
     python -m smart_esc_tool COM5 selftest          # checks the ESP32 adapter
     python -m smart_esc_tool COM5 find --via inav   # through a flight controller
 
-`set` changes a setting for the session; `save` writes it and leaves through the
-menu's save entry.
+`menu` and `config` only read, and leave through the menu's exit entry without
+writing anything. `save` writes and leaves through the save entry. `set` changes a
+setting for the session and stays in the menu, where the ESC ignores the throttle
+until it is saved, reset or powered off.
 
 Releases carry a Windows `.exe` with nothing to install.
 
