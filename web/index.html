@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Smart ESC Tool</title>
+    <meta name="description" content="Read and change a Spektrum Avian ESC's settings over SRXL2, through a flight controller running INAV or the SRXL2 adapter." />
+    <link rel="icon" href="icon.png" />
+    <link rel="stylesheet" href="src/style.css" />
+  </head>
+  <body>
+    <div class="window">
+      <header class="header">
+        <img class="badge" src="icon.png" alt="" width="40" height="40" />
+        <div class="words">
+          <fluent-text size="500" weight="semibold" as="h1">Smart ESC Tool</fluent-text>
+          <fluent-text size="200" class="subtitle" id="subtitle">Spektrum Avian over SRXL2</fluent-text>
+        </div>
+        <div class="spacer"></div>
+        <fluent-dropdown id="ports" placeholder="Looking for boards" class="ports">
+          <fluent-listbox id="port-list"></fluent-listbox>
+        </fluent-dropdown>
+        <fluent-button id="add-port" appearance="secondary" title="Let this page use another serial port">
+          <span slot="start" class="icon" data-icon="usb"></span>Add a port
+        </fluent-button>
+        <fluent-button id="connect" appearance="primary">
+          <span slot="start" class="icon" data-icon="connect"></span>Connect
+        </fluent-button>
+      </header>
+
+      <fluent-progress-bar id="progress" class="progress" thickness="medium"></fluent-progress-bar>
+
+      <main class="body" id="body">
+        <section class="group" id="group" hidden>
+          <fluent-text size="400" weight="semibold" as="h2" class="group-title">Parameters</fluent-text>
+          <div class="cards" id="cards"></div>
+        </section>
+        <div class="empty" id="empty">
+          <fluent-text size="300" align="center" id="empty-text">
+            Plug in a flight controller running INAV, or the SRXL2 adapter, then choose it above and press Connect.
+          </fluent-text>
+        </div>
+      </main>
+
+      <fluent-divider></fluent-divider>
+
+      <footer class="footer">
+        <fluent-text size="200" class="status" id="status"></fluent-text>
+        <fluent-text size="200" class="unsaved" id="unsaved"></fluent-text>
+        <fluent-button id="save" appearance="primary">
+          <span slot="start" class="icon" data-icon="save"></span>Save to ESC
+        </fluent-button>
+        <fluent-button id="defaults">
+          <span slot="start" class="icon" data-icon="history"></span>Restore defaults
+        </fluent-button>
+        <fluent-button id="leave">Leave without saving</fluent-button>
+      </footer>
+    </div>
+    <div class="notices" id="notices"></div>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>

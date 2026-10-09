@@ -96,6 +96,22 @@ longer than a quarter of a second, so a worker thread owns the transport and the
 menu while a person reads the screen, and every value shown is one the ESC
 reported after the change rather than the value that was asked for.
 
+The same window runs in a browser, as a web app that installs like an
+application and works offline afterwards. It needs Web Serial, so Chrome or Edge
+on a computer:
+
+    cd web
+    npm install
+    npm run dev          # http://localhost:5173, or npm run build for web/dist
+
+The browser only lets a page open ports a person has picked: press **Add a port**
+once per board, and it is remembered. Behind the window a worker owns the port,
+as in the desktop application, and keeps feeding the ESC's link between requests
+as well; the page shows only what the ESC reported. `npm test` checks the port
+byte for byte against this Python code and
+drives whole sessions against a simulated Avian, which `?demo` also offers in the
+page. INAV's SITL is not reachable from a browser, which has no TCP sockets.
+
 Or a command line, where `<port>` is the serial port and the route defaults to the
 ESP32 adapter:
 

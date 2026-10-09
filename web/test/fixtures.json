@@ -1,0 +1,36 @@
+{
+  "us_to_value": {
+    "900": 0,
+    "988": 0,
+    "1000": 768,
+    "1500": 32768,
+    "2000": 64768,
+    "2100": 65532
+  },
+  "handshake_40_400k": "a6210e31400a010056414e4954f6",
+  "handshake_broadcast": "a6210e31ff0a000056414e4973c9",
+  "control_menu_40": "a6cd1e0040640000ff0000000003008000fd00800080008000800080b49f",
+  "control_empty": "a6cd0e004164000000000000d3eb",
+  "stream": "0013a6210e31400a010056414e4954f6a601a6cd1e0040640000ff0000000003008000fd00800080008000800080b49fa6210e31ff0a",
+  "split_frames": [
+    "a6210e31400a010056414e4954f6",
+    "a6cd1e0040640000ff0000000003008000fd00800080008000800080b49f"
+  ],
+  "split_rest": "a6210e31ff0a",
+  "esc_telemetry": {
+    "sensor_id": 32,
+    "rpm": 5000,
+    "voltage_V": 27.0,
+    "temp_fet_C": 30.0,
+    "current_A": 1.0,
+    "temp_bec_C": 28.0,
+    "current_bec": 1.0,
+    "volts_bec": 5.0,
+    "throttle_pc": 100.0,
+    "power_pc": 40.0
+  },
+  "msp_passthrough": "244d3c02f5fe1d14",
+  "msp_fc_variant": "244d3c000202",
+  "msp2_srxl2_status": "24583c003322000009",
+  "slip": "c057dbdc01dbdd02c0"
+}
