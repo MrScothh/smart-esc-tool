@@ -1,7 +1,7 @@
 {
   "name": "smart-esc-tool-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "Smart ESC Tool as an installable web app: Spektrum Avian settings over SRXL2 through Web Serial",
   "type": "module",
   "scripts": {

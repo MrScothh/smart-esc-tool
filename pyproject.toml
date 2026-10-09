@@ -1,6 +1,6 @@
 [project]
 name = "smart-esc-tool"
-version = "0.1.0.dev0"
+version = "1.1.0"
 description = "Read, configure and update Spektrum Smart ESCs over SRXL2, without the vendor dongle"
 readme = "README.md"
 requires-python = ">=3.9"

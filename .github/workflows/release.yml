@@ -1,7 +1,8 @@
 name: release
 
-# Builds the Windows executable people actually download. Runs on a tag so that
-# what is published is always something someone chose to publish.
+# Builds what people actually download: the Windows executable and the web app.
+# Runs on a tag so that what is published is always something someone chose to
+# publish.
 on:
   push:
     tags: ["v*"]
@@ -39,3 +40,33 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/SmartEscTool.exe
+
+  # The same app Pages serves, for anyone who hosts it themselves: any HTTPS
+  # server, or localhost, since Web Serial needs a secure page.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: cd dist && zip -r ../SmartEscTool-web.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-esc-tool-web
+          path: web/SmartEscTool-web.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: web/SmartEscTool-web.zip
