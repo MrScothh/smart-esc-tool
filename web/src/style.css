@@ -1,0 +1,212 @@
+/* Fluent 2 tokens (set by setTheme in main.js) and the desktop app's spacing scale: 8, 16, 24 */
+:root {
+  --gap-s: 8px;
+  --gap-m: 16px;
+  --gap-l: 24px;
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* the layout's display values would otherwise win over the hidden attribute */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--colorNeutralBackground3);
+  color: var(--colorNeutralForeground1);
+  font-family: var(--fontFamilyBase);
+}
+
+.window {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-m);
+  height: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--gap-l) var(--gap-l) var(--gap-m);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-m);
+  flex-wrap: wrap;
+}
+
+.badge {
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+
+.words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.words h1 {
+  margin: 0;
+}
+
+.subtitle,
+.status {
+  color: var(--colorNeutralForeground3);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.ports {
+  min-width: 300px;
+}
+
+.icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+}
+
+.icon svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.progress {
+  visibility: hidden;
+}
+
+.progress.busy {
+  visibility: visible;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding-right: var(--gap-s);
+}
+
+.group-title {
+  display: block;
+  margin: 0 0 var(--gap-s);
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* one parameter: its name, then the value between the two steps that change it */
+.card {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-s);
+  min-height: 56px;
+  padding: 0 var(--gap-m) 0 var(--gap-m);
+  background: var(--colorNeutralBackground1);
+  border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusLarge);
+}
+
+.card .name {
+  flex: 1;
+}
+
+.card .value {
+  min-width: 136px;
+  text-align: center;
+  font-weight: var(--fontWeightSemibold);
+}
+
+.card .value.modified {
+  color: var(--colorBrandForeground1);
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.empty fluent-text {
+  max-width: 560px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-s);
+  flex-wrap: wrap;
+}
+
+.status {
+  flex: 1;
+  min-width: 200px;
+}
+
+.status.good {
+  color: var(--colorPaletteGreenForeground1);
+}
+
+.status.warn {
+  color: var(--colorPaletteDarkOrangeForeground1);
+}
+
+.status.bad {
+  color: var(--colorPaletteRedForeground1);
+}
+
+.unsaved {
+  color: var(--colorBrandForeground1);
+  margin-right: var(--gap-s);
+}
+
+.notices {
+  position: fixed;
+  top: var(--gap-m);
+  right: var(--gap-m);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-s);
+  width: min(420px, calc(100vw - 2 * var(--gap-m)));
+  z-index: 10;
+}
+
+.notices fluent-message-bar {
+  box-shadow: var(--shadow8);
+}
+
+@media (max-width: 720px) {
+  .window {
+    padding: var(--gap-m);
+  }
+  .ports {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .spacer {
+    display: none;
+  }
+  .status {
+    flex-basis: 100%;
+  }
+  .unsaved {
+    flex: 1;
+  }
+}
