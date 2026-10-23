@@ -75,7 +75,14 @@ class Worker(threading.Thread):
 
     def run(self):
         while True:
-            job = self.jobs.get()
+            try:
+                # Between two instructions the wire still has to be fed: the
+                # ESC drops its link after a quarter of a second of silence,
+                # and a person reading the screen takes longer than that.
+                job = self.jobs.get(timeout=0.05 if self.linked() else None)
+            except queue.Empty:
+                self.idle()
+                continue
             if job is None:
                 return
             name, args = job[0], job[1:]
@@ -163,6 +170,23 @@ class Worker(threading.Thread):
             linked = esc_linked(self.device)
         self.out.put(("closed", name, linked))
         self.out.put(("busy", False))
+
+    def linked(self):
+        return self.menu is not None and self.menu.device is not None
+
+    def idle(self):
+        """Keep the ESC's link while nobody asks for anything, and notice
+        when it is gone instead of finding out at the next instruction."""
+        try:
+            self.menu.pump(0.05)
+            if not self.menu.answering():
+                raise MenuError("The ESC stopped answering: switch it off "
+                                "and on, then press Connect")
+        except Exception as exc:
+            self.say(str(exc), "bad")
+            self.close()
+            self.out.put(("closed", None, None))
+            self.out.put(("busy", False))
 
     def close(self):
         if self.br is not None:

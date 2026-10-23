@@ -122,6 +122,16 @@ class AvianMenu(object):
             if body[1] == TEXTGEN_SENSOR and self.screen.feed(body[1:]):
                 self._last_change = time.monotonic()
 
+    def pump(self, seconds):
+        """Feed the link for a while and ask nothing of the menu: what a
+        window does between two instructions, while a person reads."""
+        self._pump(seconds)
+
+    def answering(self, within=1.5):
+        """Whether the ESC sent telemetry in the last `within` seconds."""
+        return (self.device is not None
+                and time.monotonic() - self._last_telemetry < within)
+
     # ------------------------------------------------------------- primitives
     def connect(self, timeout=45.0):
         """Wait for an ESC to answer, saying so while it waits.
